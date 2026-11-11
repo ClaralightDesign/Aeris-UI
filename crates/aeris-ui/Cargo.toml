@@ -1,0 +1,27 @@
+[package]
+name = "aeris-ui"
+description = "Aeris UI components, design tokens, and Canopus LVGL renderer"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+
+[lib]
+crate-type = ["rlib"]
+
+[features]
+default = []
+
+band-10-pro = [
+    "dep:canopus-abi",
+    "dep:canopus-runtime",
+    "dep:canopus-target-private",
+    "dep:rolling-digits",
+    "canopus-target-private/target-xiaomi-band-10-pro-3-101-043",
+]
+gallery = ["band-10-pro"]
+
+[dependencies]
+canopus-abi = { git = "https://github.com/AstralSightStudios/Canopus.git", rev = "f196b200823f47780c73ae48c4c62da8fe5311df", optional = true }
+canopus-runtime = { git = "https://github.com/AstralSightStudios/Canopus.git", rev = "f196b200823f47780c73ae48c4c62da8fe5311df", optional = true }
+canopus-target-private = { git = "https://github.com/AstralSightStudios/Canopus.git", rev = "f196b200823f47780c73ae48c4c62da8fe5311df", optional = true, default-features = false }
+rolling-digits = { path = "../rolling-digits", optional = true }
