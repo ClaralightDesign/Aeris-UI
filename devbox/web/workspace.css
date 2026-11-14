@@ -138,12 +138,11 @@ button[data-slot="smooth-corners"]:focus-visible { outline: 2px solid #69b6ff; o
   border-radius: 6px;
 }
 .debug-workspace .debug-icon[aria-pressed=true] { background: var(--debug-hover); }
-.debug-tools { --debug-tool-backdrop: blur(4px); }
-.debug-tools .debug-icon, .debug-capture-slot {
-  -webkit-backdrop-filter: var(--debug-tool-backdrop);
-  backdrop-filter: var(--debug-tool-backdrop);
+.debug-tools .debug-icon:is(:hover, [aria-pressed=true]),
+.debug-capture-slot:not([data-status=idle]) {
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
 }
-.debug-capture-slot .debug-icon { -webkit-backdrop-filter: none; backdrop-filter: none; }
 .debug-toolbar .debug-icon[aria-pressed=true] { background: #ffffff36; }
 .debug-toolbar .debug-icon:hover, .debug-toolbar .debug-target:hover { background: #ffffff20; }
 .debug-stage { position: relative; flex: 1; min-height: 0; overflow: hidden; display: grid; padding: 12px; }
@@ -1192,7 +1191,8 @@ button[data-slot="smooth-corners"]:focus-visible { outline: 2px solid #69b6ff; o
 }
 .debug-capture-slot[data-status=recording] { width: 80px; }
 .debug-capture-slot[data-status=exporting] { width: 112px; }
-.debug-capture-slot[data-status=saved] { width: 136px; }
+.debug-capture-slot:is([data-status=recording], [data-status=exporting]) { background: rgb(255 70 70 / 16%); }
+.debug-capture-slot[data-status=saved] { width: 136px; background: rgb(255 255 255 / 16%); }
 .debug-capture-idle {
   display: flex;
   transition: opacity .2s ease, filter .24s ease;
