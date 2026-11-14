@@ -100,6 +100,7 @@ impl Ring {
         if layer.is_null() {
             return None;
         }
+        unsafe { lv::inspect_name(layer, c"AerisUI.ProgressRing") };
         unsafe { lvx_object_align(layer, 1, x, y) };
         let segments = art.tiles.map(|asset| {
             let clip = unsafe { clip(layer, half, half) };

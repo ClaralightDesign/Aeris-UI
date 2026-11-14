@@ -4,6 +4,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join, resolve, sep } from 'node:path';
+import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
 
@@ -98,11 +99,13 @@ async function run(command, args, options, capture = false) {
       ...options, detached: globalThis.process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'],
     });
     child = process;
-    process.stdout.on('data', (chunk) => {
-      if (capture) stdout += chunk;
-      else log('info', chunk.toString());
-    });
-    process.stderr.on('data', (chunk) => log('info', chunk.toString()));
+    if (capture) {
+      process.stdout.setEncoding('utf8');
+      process.stdout.on('data', (chunk) => { stdout += chunk; });
+    } else {
+      createInterface({ input: process.stdout, crlfDelay: Infinity }).on('line', (line) => log('log', line + '\n'));
+    }
+    createInterface({ input: process.stderr, crlfDelay: Infinity }).on('line', (line) => log('log', line + '\n'));
     process.once('error', fail);
     process.once('close', (code) => {
       if (child === process) child = undefined;

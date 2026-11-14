@@ -263,6 +263,7 @@ impl<const N: usize> NumericWheel<N> {
             return None;
         }
         let root = unsafe { font::clip(parent, bounds.w, HEIGHT, 0) }?;
+        unsafe { lv::inspect_name(root, c"AerisUI.NumericWheel") };
         unsafe { lvx_object_align(root, 1, bounds.x, bounds.y) };
         let mut wheels: [Option<Wheel>; N] = core::array::from_fn(|_| None);
         for (index, (area, spec)) in areas.into_iter().zip(specs).enumerate() {

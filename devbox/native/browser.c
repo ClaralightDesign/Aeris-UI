@@ -1,6 +1,7 @@
 /* 浏览器的显示、指针和 LVGL 资源适配。 */
 
 #include "lvgl.h"
+#include "src/core/lv_obj_class_private.h"
 #include "src/misc/cache/instance/lv_image_cache.h"
 #include <emscripten.h>
 #include <stdlib.h>
@@ -563,13 +564,16 @@ EM_JS(void, browser_panic, (const char *file, size_t length, unsigned line), {
 void gallery_panic(const char *file, size_t length, unsigned line) { browser_panic(file, length, line); }
 
 EM_JS(void, inspect_node,
-      (uintptr_t id, uintptr_t parent, int kind, const char *value, size_t length, int x, int y, int width, int height,
+      (uintptr_t id, uintptr_t parent, int kind, const char *class_name, const char *component, const char *value, size_t length,
+       int x, int y, int width, int height,
        int content_x, int content_y, int content_width, int content_height,
        int hidden, int clickable, int scrollable, int overflow, unsigned events,
        uint32_t background, uint32_t foreground, unsigned background_opacity, unsigned opacity,
        int radius, int border, int font_height, int alignment, unsigned checked, unsigned disabled), {
     Module.galleryNodes.push({
-        id, parent, kind, value: value ? new TextDecoder().decode(HEAPU8.subarray(value, value + length)) : "",
+        id, parent, kind, className: class_name ? UTF8ToString(class_name) : "",
+        component: component ? UTF8ToString(component) : "",
+        value: value ? new TextDecoder().decode(HEAPU8.subarray(value, value + length)) : "",
         x, y, width, height, contentX: content_x, contentY: content_y,
         contentWidth: content_width, contentHeight: content_height,
         hidden: !!hidden, clickable: !!clickable, scrollable: !!scrollable, overflow: !!overflow, events,
@@ -587,7 +591,10 @@ static void inspect_tree(lv_obj_t *obj, lv_obj_t *parent, bool hidden) {
         lv_obj_has_class(obj, &lv_image_class) ? 2 : 3;
     const char *value = kind == 1 ? lv_label_get_text(obj) : NULL;
     const lv_font_t *font = lv_obj_get_style_text_font(obj, LV_PART_MAIN);
-    inspect_node((uintptr_t)obj, (uintptr_t)parent, kind, value, value ? strlen(value) : 0,
+    const char *class_name = parent ? lv_obj_get_class(obj)->name : "lv_screen";
+    const char *name = lv_obj_get_name(obj);
+    const char *component = name && strncmp(name, "AerisUI.", 8) == 0 ? name : NULL;
+    inspect_node((uintptr_t)obj, (uintptr_t)parent, kind, class_name, component, value, value ? strlen(value) : 0,
                  area.x1, area.y1, lv_area_get_width(&area), lv_area_get_height(&area),
                  content.x1, content.y1, lv_area_get_width(&content), lv_area_get_height(&content),
                  hidden, lv_obj_has_flag(obj, LV_OBJ_FLAG_CLICKABLE), lv_obj_has_flag(obj, LV_OBJ_FLAG_SCROLLABLE),

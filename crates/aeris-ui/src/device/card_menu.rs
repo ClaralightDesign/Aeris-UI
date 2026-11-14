@@ -77,6 +77,7 @@ impl CardMenu {
                 lvx_object_delete(overlay);
                 return None;
             }
+            lv::inspect_name(overlay, c"AerisUI.CardMenu");
             lvx_set_hidden(overlay, 1);
             Some(Self {
                 root,

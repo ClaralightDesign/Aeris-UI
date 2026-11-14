@@ -71,6 +71,7 @@ pub unsafe fn screen_in(parent: Obj, viewport: Viewport) -> Obj {
     let root = unsafe { lv::background(parent, w, h, Color::Background.resolve(), 0) };
     if !root.is_null() {
         unsafe {
+            lv::inspect_name(root, c"AerisUI.Screen");
             lvx_object_align(root, 1, x, y);
             lvx_object_clear_flag(root, lv::SCROLLABLE | lv::CLICKABLE);
         };
@@ -86,6 +87,7 @@ pub unsafe fn scroll_in(parent: Obj, bounds: Rect) -> Obj {
     let area = unsafe { lv::page(parent, bounds.x, bounds.w, bounds.h) };
     if !area.is_null() {
         unsafe {
+            lv::inspect_name(area, c"AerisUI.ScrollArea");
             lvx_object_align(area, 1, bounds.x, bounds.y);
             lvx_object_clear_flag(area, lv::SCROLL_CHAIN);
             lvx_object_add_flag(area, lv::CLICKABLE);
@@ -141,6 +143,7 @@ pub unsafe fn button_in(
     unsafe {
         let button = lv::capsule(parent, area.x, area.y, area.w, kind);
         if !button.is_null() {
+            lv::inspect_name(button, c"AerisUI.Button");
             let color = if kind == CapsuleKind::LargePrimary {
                 theme::primary_button_foreground()
             } else {

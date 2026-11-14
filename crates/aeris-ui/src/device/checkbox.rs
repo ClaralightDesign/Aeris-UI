@@ -125,6 +125,7 @@ impl Checkbox {
             if root.is_null() {
                 return None;
             }
+            lv::inspect_name(root, c"AerisUI.Checkbox");
             lvx_object_align(root, 1, area.x, area.y);
             lvx_object_clear_flag(root, lv::SCROLLABLE);
             lvx_object_add_flag(root, lv::CLICKABLE);

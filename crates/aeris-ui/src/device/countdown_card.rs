@@ -56,6 +56,7 @@ impl CountdownCard {
             if card.is_null() {
                 return None;
             }
+            lv::inspect_name(card, c"AerisUI.CountdownCard");
             let width = WIDTH - 123;
             let rolling_time = RollingNumber::fixed(
                 card,

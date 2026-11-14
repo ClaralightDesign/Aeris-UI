@@ -34,6 +34,7 @@ impl ProgressBar {
                 lvx_object_delete(track);
                 return None;
             }
+            lv::inspect_name(track, c"AerisUI.ProgressBar");
             lvx_object_align(track, 1, area.x, area.y);
             lvx_object_clear_flag(track, lv::CLICKABLE | lv::SCROLLABLE);
             lvx_object_clear_flag(fill, lv::CLICKABLE | lv::SCROLLABLE);

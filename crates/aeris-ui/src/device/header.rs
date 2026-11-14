@@ -97,6 +97,7 @@ unsafe fn new_title(root: Obj, title: &[u8], layout: HeaderLayout) -> Obj {
             Font::Small24,
         )
     };
+    unsafe { lv::inspect_name(object, c"AerisUI.HeaderTitle") };
     set_title_style(object, width, height, layout.title_align);
     object
 }

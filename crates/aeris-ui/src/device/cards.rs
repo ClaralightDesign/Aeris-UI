@@ -170,6 +170,7 @@ impl Choice {
             pair(card, title, subtitle, 181, Color::SecondaryText.resolve());
             let control = container(card, WIDTH - 99, 29, 81, 40);
             if !control.is_null() {
+                lv::inspect_name(control, c"AerisUI.Switch");
                 entry.off = lv::image(control, assets::CARD_SWITCH_OFF_BG, 0, 0);
                 entry.on = lv::image(control, assets::CARD_SWITCH_ON_BG, 0, 0);
                 entry.thumb = lv::image(control, assets::CARD_SWITCH_THUMB, 5, 5);
@@ -194,6 +195,7 @@ impl Choice {
             pair(card, title, subtitle, 224, Color::SecondaryText.resolve());
             entry.off = container(card, WIDTH - 58, 29, 40, 40);
             if !entry.off.is_null() {
+                lv::inspect_name(entry.off, c"AerisUI.Radio");
                 entry.on = lv::dot(entry.off, 0, 0, 40, 255);
                 lv::style(entry.on, 28, 0x3488FF);
                 entry.thumb = lv::dot(entry.off, 10, 10, 20, 255);
@@ -247,6 +249,7 @@ fn render_choice(entry: &Choice) {
 pub unsafe fn stepper(parent: Obj, y: i32, on_step: LvxEventCallback) -> (Obj, Obj) {
     unsafe {
         let row = container(parent, 4, y, 328, 65);
+        lv::inspect_name(row, c"AerisUI.Stepper");
         if row.is_null() {
             return (row, row);
         }
@@ -272,6 +275,7 @@ pub unsafe fn stepper(parent: Obj, y: i32, on_step: LvxEventCallback) -> (Obj, O
 pub unsafe fn switch_row(list: Obj, y: i32, title: &str, on_click: LvxEventCallback) {
     unsafe {
         let row = lv::background(list, 328, 68, 0x1F1F1F, 34);
+        lv::inspect_name(row, c"AerisUI.SwitchRow");
         if !row.is_null() {
             lvx_object_align(row, 1, 4, y);
             lvx_object_clear_flag(row, lv::SCROLLABLE);
@@ -314,6 +318,7 @@ pub unsafe fn status_card_with(
 ) -> Obj {
     unsafe {
         let card = lv::image(parent, art, 4, y);
+        lv::inspect_name(card, c"AerisUI.StatusCard");
         if !card.is_null() {
             lvx_object_clear_flag(card, lv::SCROLLABLE);
             pair(card, title, subtitle, WIDTH - 152, secondary);
@@ -334,6 +339,7 @@ pub unsafe fn jump_card_with_detail(
 ) -> (Obj, Obj) {
     unsafe {
         let card = lv::card(parent, 4, y);
+        lv::inspect_name(card, c"AerisUI.JumpCard");
         if card.is_null() {
             return (card, NULL);
         }

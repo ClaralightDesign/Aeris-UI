@@ -162,6 +162,7 @@ impl RollingNumber {
             started: None,
             pending: None,
         };
+        unsafe { lv::inspect_name(clip, c"AerisUI.RollingNumber") };
         time.paint(1000);
         Some(time)
     }

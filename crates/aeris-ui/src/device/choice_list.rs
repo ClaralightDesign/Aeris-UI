@@ -26,6 +26,7 @@ impl<const N: usize> ChoiceList<N> {
         for (index, (title, subtitle)) in options.into_iter().take(N).enumerate() {
             let card = unsafe { lv::card(parent, 4, top + index as i32 * step) };
             if !card.is_null() {
+                unsafe { lv::inspect_name(card, c"AerisUI.ChoiceListRow") };
                 list.rows[index] =
                     Some(unsafe { Choice::radio(card, title, subtitle, selected == Some(index)) });
                 lv::bind(card, on_select, index);

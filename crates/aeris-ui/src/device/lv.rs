@@ -100,6 +100,20 @@ pub fn style(object: Obj, property: u32, value: u32) {
     }
 }
 
+// 预览组件名随 LVGL 对象销毁，设备端不记录。
+#[inline]
+pub(super) unsafe fn inspect_name(_object: Obj, _name: &'static core::ffi::CStr) {
+    #[cfg(target_os = "emscripten")]
+    {
+        extern "C" {
+            fn lv_obj_set_name_static(object: Obj, name: *const core::ffi::c_char);
+        }
+        if !_object.is_null() {
+            unsafe { lv_obj_set_name_static(_object, _name.as_ptr()) };
+        }
+    }
+}
+
 pub unsafe fn background(parent: Obj, width: i32, height: i32, color: u32, radius: u32) -> Obj {
     let object = unsafe { lvx_object_create(parent) };
     if object.is_null() {
@@ -241,6 +255,7 @@ pub unsafe fn pager(parent: Obj, width: i32, height: i32) -> Obj {
         lvx_object_set_scroll_snap_x(object, 3); // 居中吸附
         lvx_object_set_scrollbar_mode(object, 0);
     }
+    unsafe { inspect_name(object, c"AerisUI.Pager") };
     style(object, BG_OPA, 0);
     style(object, BORDER_OPA, 0);
     object
@@ -259,6 +274,7 @@ pub unsafe fn page(parent: Obj, x: i32, width: i32, height: i32) -> Obj {
         lvx_object_set_scrollbar_mode(object, 0);
         lvx_object_clear_flag(object, 1 << 1); // 可点击
     }
+    unsafe { inspect_name(object, c"AerisUI.Page") };
     style(object, BG_OPA, 0);
     style(object, BORDER_OPA, 0);
     object
@@ -276,7 +292,9 @@ pub unsafe fn header_button(
     x: i32,
     y: i32,
 ) -> HeaderButton {
-    unsafe { round_button(parent, background, glyph, x, y, 68, 14) }
+    let button = unsafe { round_button(parent, background, glyph, x, y, 68, 14) };
+    unsafe { inspect_name(button.root, c"AerisUI.HeaderButton") };
+    button
 }
 
 pub(super) fn recolor(image: Obj, color: u32) {
@@ -312,6 +330,7 @@ pub unsafe fn round_button(
                 }
             }
         }
+        inspect_name(root, c"AerisUI.RoundButton");
         anim::attach(root, size / 2, size / 2, anim::Feedback::Scale);
     }
     button
@@ -331,6 +350,7 @@ pub unsafe fn card_with(parent: Obj, x: i32, y: i32, feedback: anim::Feedback) -
     style(object, BORDER_OPA, 0);
     unsafe {
         lvx_object_clear_flag(object, SCROLLABLE);
+        inspect_name(object, c"AerisUI.Card");
         anim::attach(object, CARD_WIDTH / 2, CARD_HEIGHT / 2, feedback);
     }
     object
@@ -372,6 +392,7 @@ pub unsafe fn capsule(parent: Obj, x: i32, y: i32, width: i32, kind: CapsuleKind
     // 裁去胶囊切片四角的黑底。
     style(object, 45, 1);
     unsafe {
+        inspect_name(object, c"AerisUI.Capsule");
         anim::attach(object, width / 2, height / 2, anim::Feedback::Capsule);
         for (path, rect, source_width) in [
             (left, layout.left, 80),

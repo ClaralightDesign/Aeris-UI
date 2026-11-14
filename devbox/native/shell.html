@@ -79,7 +79,7 @@
       galleryLog(level, text) {
         notify("aeris-debug-log", { level, text: String(text) });
       },
-      print(text) { console.log(text); Module.galleryLog("info", text); },
+      print(text) { console.log(text); Module.galleryLog("log", text); },
       printErr(text) { console.error(text); Module.galleryLog("error", text); },
       galleryError() {
         notify("aeris-debug-error");

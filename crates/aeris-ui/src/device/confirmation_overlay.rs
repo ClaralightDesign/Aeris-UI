@@ -126,6 +126,7 @@ pub unsafe fn show_with_options(
         return false;
     };
     let (disc, glyph, text, body) = unsafe {
+        lv::inspect_name(layers.surface, c"AerisUI.ConfirmationOverlay");
         lv::style(layers.surface, LV_STYLE_CLIP_CORNER, 1);
         for x in [0, page::WIDTH / 2] {
             let shade = lv::image(layers.content, assets::HEADER_BACKGROUND, x, 0);

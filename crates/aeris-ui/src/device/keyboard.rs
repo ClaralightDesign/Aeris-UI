@@ -39,6 +39,7 @@ impl<const N: usize> Keyboard<N> {
             if root.is_null() {
                 return None;
             }
+            lv::inspect_name(root, c"AerisUI.Keyboard");
             lvx_object_add_flag(root, lv::CLICKABLE);
             let field = lv::card(root, 4, 84);
             if field.is_null() {

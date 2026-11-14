@@ -56,6 +56,7 @@ impl<const N: usize> Indicator<N> {
         Self {
             dots: core::array::from_fn(|index| {
                 let dot = unsafe { lv::dot(root, 0, 0, 10, 102) };
+                unsafe { lv::inspect_name(dot, c"AerisUI.PageIndicatorDot") };
                 lv::bind(dot, select, index);
                 dot
             }),

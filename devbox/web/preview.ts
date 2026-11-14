@@ -2,6 +2,8 @@ export type PreviewNode = {
   id: number;
   parent: number;
   kind: number;
+  className?: string;
+  component?: string;
   value: string;
   x: number;
   y: number;
@@ -40,10 +42,14 @@ export type PreviewWindow = Window & {
 };
 
 export const width = 336;
-export const kindName = ['屏幕', '文字', '图片', '容器'];
+const kindName = ['lv_screen', 'lv_label', 'lv_image', 'lv_obj'];
+
+export function nodeClass(node: PreviewNode) {
+  return node.className || kindName[node.kind] || 'lv_obj';
+}
 
 export function nodeName(node: PreviewNode) {
-  return node.kind === 1 && node.value ? node.value : kindName[node.kind];
+  return node.component || nodeClass(node);
 }
 
 export function pickNode(nodes: PreviewNode[], x: number, y: number) {

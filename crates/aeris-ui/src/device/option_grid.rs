@@ -42,6 +42,7 @@ pub unsafe fn grid<'a>(
             if button.is_null() {
                 continue;
             }
+            lv::inspect_name(button, c"AerisUI.OptionGridItem");
             lvx_object_clear_flag(button, lv::SCROLLABLE);
             anim::attach(
                 button,

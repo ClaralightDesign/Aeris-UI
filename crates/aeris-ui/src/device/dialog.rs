@@ -115,6 +115,7 @@ pub unsafe fn layers(parent: Obj, width: i32, height: i32) -> Option<Layers> {
         return None;
     }
     unsafe {
+        lv::inspect_name(dialog, c"AerisUI.Dialog");
         lvx_set_hidden(dialog, 1);
         lvx_object_add_flag(dialog, lv::CLICKABLE);
         lvx_object_clear_flag(
@@ -161,6 +162,7 @@ pub unsafe fn confirm(
         ..
     } = layers;
     unsafe {
+        lv::inspect_name(dialog, c"AerisUI.ConfirmDialog");
         let clock = lv::label_right(
             content,
             &super::page::clock_bytes(),

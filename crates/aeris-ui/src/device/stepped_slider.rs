@@ -57,6 +57,7 @@ impl SteppedSlider {
             if root.is_null() {
                 return None;
             }
+            lv::inspect_name(root, c"AerisUI.SteppedSlider");
             lvx_object_clear_flag(root, lv::CLICKABLE | lv::SCROLLABLE);
             let slider = Self::mount(root, steps, initial.min(steps), on_input);
             if slider.is_none() {

@@ -147,6 +147,7 @@ pub unsafe fn fixed(
 
 pub unsafe fn clock(parent: Obj, text: &[u8], area: [i32; 4], align: u32) -> (Obj, bool) {
     if let Some(object) = unsafe { fixed(parent, CLOCK, text, area, align) } {
+        unsafe { lv::inspect_name(object, c"AerisUI.Clock") };
         return (object, true);
     }
     let [x, y, width, height] = area;
@@ -154,6 +155,7 @@ pub unsafe fn clock(parent: Obj, text: &[u8], area: [i32; 4], align: u32) -> (Ob
     if align == 3 {
         lv::style(label, 94, 3);
     }
+    unsafe { lv::inspect_name(label, c"AerisUI.Clock") };
     lv::text_px(label, width, height, align, Font::Small24, 26);
     (label, false)
 }

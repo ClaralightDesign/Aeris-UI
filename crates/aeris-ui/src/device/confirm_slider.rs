@@ -65,6 +65,7 @@ impl Slider {
                 thumb,
                 lv::SCROLLABLE | lv::SCROLL_CHAIN | lv::GESTURE_BUBBLE,
             );
+            lv::inspect_name(thumb, c"AerisUI.ConfirmSlider");
             lvx_object_add_flag(thumb, lv::CLICKABLE | PRESS_LOCK);
             for event in [
                 EVENT_PRESSED,

@@ -1,6 +1,6 @@
 import { Button, Input } from '@heroui/react';
 import { useState } from 'react';
-import { kindName, nodeName, type PreviewNode } from './preview';
+import { nodeClass, nodeName, type PreviewNode } from './preview';
 import arrow from './assets/CaretDown2.svg';
 import search from './assets/MagnifyingGlass.svg';
 import eye from './assets/Eye.svg';
@@ -31,7 +31,7 @@ function NodeDetails({ node, tab }: { node: PreviewNode; tab: string }) {
       ['溢出可见', node.overflow ? '是' : '否'],
     ] : tab === '事件监听器' ? [['已注册回调', node.events]]
     : tab === '无障碍' ? [['可点击', node.clickable ? '是' : '否'], ['文字', node.value || '—'], ['禁用', node.disabled ? '是' : '否']]
-    : [['类型', kindName[node.kind]], ['文字', node.value || '—'], ['隐藏', node.hidden ? '是' : '否'],
+    : [['类型', nodeClass(node)], ...(node.component ? [['组件', node.component]] : []), ['文字', node.value || '—'], ['隐藏', node.hidden ? '是' : '否'],
       ['可滚动', node.scrollable ? '是' : '否'], ['选中', node.checked ? '是' : '否']];
   return <dl className="debug-properties">{rows.map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{value}</dd></div>)}</dl>;
 }
@@ -60,7 +60,7 @@ export function Inspector({ nodes, selected, select, hover }: TreeProps) {
   }
   collect(selected, selectedPath);
   if (term) {
-    nodes.filter((node) => (nodeName(node) + ' ' + kindName[node.kind]).toLocaleLowerCase().includes(term))
+    nodes.filter((node) => [nodeName(node), nodeClass(node), node.value].join(' ').toLocaleLowerCase().includes(term))
       .forEach((node) => collect(node, matching));
   }
 
