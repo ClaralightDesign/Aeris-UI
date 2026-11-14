@@ -2,7 +2,8 @@
 
 use serde_json::Value;
 use std::{
-    env, fs, io,
+    env, fs,
+    io::{self, Write},
     path::{Path, PathBuf},
     process::{Command, ExitCode, Stdio},
 };
@@ -10,6 +11,8 @@ use std::{
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 const TARGET: &str = "wasm32-unknown-emscripten";
+const USAGE: &str = "用法：cargo aeris-devbox [devbox.json]\n      cargo aeris-devbox agent --help";
+const AGENT_CLIENT: &str = include_str!("agent-client.mjs");
 const RUNTIME_FILES: &[&str] = &[
     "cli.mjs",
     "index.html",
@@ -30,13 +33,35 @@ fn main() -> ExitCode {
 }
 
 fn launch() -> Result<()> {
-    let mut args = env::args_os().skip(1).peekable();
+    let mut args = env::args_os()
+        .skip(1)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .peekable();
     if args.peek().is_some_and(|arg| arg == "aeris-devbox") {
         args.next();
     }
+    let agent_action = if args.peek().is_some_and(|arg| arg == "agent") {
+        args.next();
+        let starts_runtime = matches!(
+            args.peek().and_then(|arg| arg.to_str()),
+            Some("serve" | "install-browser")
+        );
+        if starts_runtime && !args.clone().any(|arg| arg == "--help" || arg == "-h") {
+            args.next()
+        } else {
+            let mut node = Command::new("node");
+            node.args(["--input-type=module", "--eval", AGENT_CLIENT, "--"])
+                .args(args);
+            return run_node(node);
+        }
+    } else {
+        None
+    };
+    let agent = agent_action.is_some();
     let config = match args.next() {
         Some(arg) if arg == "--help" || arg == "-h" => {
-            println!("用法：cargo aeris-devbox [devbox.json]");
+            println!("{USAGE}");
             return Ok(());
         }
         Some(arg) if arg == "--version" || arg == "-V" => {
@@ -47,7 +72,7 @@ fn launch() -> Result<()> {
         None => PathBuf::from("devbox.json"),
     };
     if args.next().is_some() {
-        return Err("用法：cargo aeris-devbox [devbox.json]".into());
+        return Err(USAGE.into());
     }
     let config = config.canonicalize().map_err(|error| {
         format!(
@@ -105,14 +130,23 @@ fn launch() -> Result<()> {
     if !devbox.join("cli.mjs").is_file() {
         return Err("当前 Aeris UI 修订没有 DevBox，请更新项目的 Aeris UI 依赖。".into());
     }
-    let runtime = project.join("target/aeris-devbox/tool");
+    let runtime = project.join(if agent {
+        if !devbox.join("agent.mjs").is_file() {
+            return Err("当前 Aeris UI 修订没有 Agent CLI，请更新项目的 Aeris UI 依赖。".into());
+        }
+        "target/aeris-devbox/agent-tool"
+    } else {
+        "target/aeris-devbox/tool"
+    });
     prepare_runtime(&devbox, &runtime)?;
-    install_web_dependencies(&runtime)?;
+    install_web_dependencies(&runtime, agent)?;
 
     let mut node = Command::new("node");
-    node.current_dir(project)
-        .arg(runtime.join("cli.mjs"))
-        .arg(config)
+    node.current_dir(project).arg(runtime.join("cli.mjs"));
+    if let Some(action) = agent_action {
+        node.arg("agent").arg(action);
+    }
+    node.arg(config)
         .env("AERIS_DEVBOX_SOURCE_ROOT", source)
         .env("CARGO", cargo);
     run_node(node)
@@ -170,6 +204,15 @@ fn prepare_runtime(source: &Path, runtime: &Path) -> io::Result<()> {
     for name in RUNTIME_FILES {
         copy_file(&source.join(name), &runtime.join(name))?;
     }
+    for name in ["pnpm-workspace.yaml", "agent.mjs", "agent-mcp.mjs"] {
+        let from = source.join(name);
+        let to = runtime.join(name);
+        if from.is_file() {
+            copy_file(&from, &to)?;
+        } else if to.is_file() {
+            fs::remove_file(to)?;
+        }
+    }
     for name in RUNTIME_DIRS {
         copy_directory(&source.join(name), &runtime.join(name))?;
     }
@@ -198,11 +241,24 @@ fn copy_directory(source: &Path, destination: &Path) -> io::Result<()> {
     Ok(())
 }
 
-fn install_web_dependencies(runtime: &Path) -> Result<()> {
+fn install_web_dependencies(runtime: &Path, agent: bool) -> Result<()> {
     let pnpm = if cfg!(windows) { "pnpm.cmd" } else { "pnpm" };
-    let status = Command::new(pnpm)
-        .args(["install", "--frozen-lockfile"])
-        .current_dir(runtime)
+    let mut command = Command::new(pnpm);
+    command
+        .args(["install", "--frozen-lockfile", "--reporter=append-only"])
+        .current_dir(runtime);
+    if agent {
+        let output = command
+            .output()
+            .map_err(|error| format!("无法运行 pnpm：{error}"))?;
+        io::stderr().write_all(&output.stdout)?;
+        io::stderr().write_all(&output.stderr)?;
+        if !output.status.success() {
+            return Err("安装 DevBox 网页依赖失败。".into());
+        }
+        return Ok(());
+    }
+    let status = command
         .status()
         .map_err(|error| format!("无法运行 pnpm：{error}"))?;
     if !status.success() {

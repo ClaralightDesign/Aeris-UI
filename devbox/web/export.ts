@@ -9,6 +9,19 @@ export function downloadBlob(blob: Blob, filename: string) {
   window.setTimeout(() => URL.revokeObjectURL(link.href), 10000);
 }
 
+export async function encodeScreenshot(canvas: HTMLCanvasElement, mime: string) {
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, mime, 0.92));
+  if (blob?.type === mime) return blob;
+  if (mime !== 'image/webp') throw new Error('截图编码失败');
+
+  // Some browsers decode WebP but only offer PNG when encoding from a canvas.
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('无法读取截图像素');
+  const { default: encode } = await import('@jsquash/webp/encode.js');
+  const bytes = await encode(context.getImageData(0, 0, canvas.width, canvas.height), { quality: 92 });
+  return new Blob([bytes], { type: mime });
+}
+
 async function framePixels(blob: Blob, size: PixelSize) {
   const bitmap = await createImageBitmap(blob);
   const canvas = document.createElement('canvas');

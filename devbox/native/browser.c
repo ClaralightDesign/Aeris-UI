@@ -567,18 +567,23 @@ EM_JS(void, inspect_node,
       (uintptr_t id, uintptr_t parent, int kind, const char *class_name, const char *component, const char *value, size_t length,
        int x, int y, int width, int height,
        int content_x, int content_y, int content_width, int content_height,
+       int margin_top, int margin_right, int margin_bottom, int margin_left,
        int hidden, int clickable, int scrollable, int overflow, unsigned events,
        uint32_t background, uint32_t foreground, unsigned background_opacity, unsigned opacity,
-       int radius, int border, int font_height, int alignment, unsigned checked, unsigned disabled), {
+       int radius, int border, int border_top, int border_right, int border_bottom, int border_left,
+       int font_height, int alignment, unsigned checked, unsigned disabled), {
     Module.galleryNodes.push({
         id, parent, kind, className: class_name ? UTF8ToString(class_name) : "",
         component: component ? UTF8ToString(component) : "",
         value: value ? new TextDecoder().decode(HEAPU8.subarray(value, value + length)) : "",
         x, y, width, height, contentX: content_x, contentY: content_y,
         contentWidth: content_width, contentHeight: content_height,
+        margin: [margin_top, margin_right, margin_bottom, margin_left],
+        borderWidths: [border_top, border_right, border_bottom, border_left],
         hidden: !!hidden, clickable: !!clickable, scrollable: !!scrollable, overflow: !!overflow, events,
         background: background >>> 0, foreground: foreground >>> 0, backgroundOpacity: background_opacity,
-        opacity, radius, border, fontHeight: font_height, alignment, checked: !!checked, disabled: !!disabled,
+        opacity, radius, border, fontHeight: font_height, alignment,
+        checked: !!checked, disabled: !!disabled,
     });
 });
 
@@ -594,15 +599,21 @@ static void inspect_tree(lv_obj_t *obj, lv_obj_t *parent, bool hidden) {
     const char *class_name = parent ? lv_obj_get_class(obj)->name : "lv_screen";
     const char *name = lv_obj_get_name(obj);
     const char *component = name && strncmp(name, "AerisUI.", 8) == 0 ? name : NULL;
+    const lv_border_side_t border_sides = lv_obj_get_style_border_side(obj, LV_PART_MAIN);
+    const int border = lv_obj_get_style_border_width(obj, LV_PART_MAIN);
     inspect_node((uintptr_t)obj, (uintptr_t)parent, kind, class_name, component, value, value ? strlen(value) : 0,
                  area.x1, area.y1, lv_area_get_width(&area), lv_area_get_height(&area),
                  content.x1, content.y1, lv_area_get_width(&content), lv_area_get_height(&content),
+                 lv_obj_get_style_margin_top(obj, LV_PART_MAIN), lv_obj_get_style_margin_right(obj, LV_PART_MAIN),
+                 lv_obj_get_style_margin_bottom(obj, LV_PART_MAIN), lv_obj_get_style_margin_left(obj, LV_PART_MAIN),
                  hidden, lv_obj_has_flag(obj, LV_OBJ_FLAG_CLICKABLE), lv_obj_has_flag(obj, LV_OBJ_FLAG_SCROLLABLE),
                  lv_obj_has_flag(obj, LV_OBJ_FLAG_OVERFLOW_VISIBLE), lv_obj_get_event_count(obj),
                  lv_color_to_u32(lv_obj_get_style_bg_color(obj, LV_PART_MAIN)) & 0xffffff,
                  lv_color_to_u32(lv_obj_get_style_text_color(obj, LV_PART_MAIN)) & 0xffffff,
                  lv_obj_get_style_bg_opa(obj, LV_PART_MAIN), lv_obj_get_style_opa_recursive(obj, LV_PART_MAIN),
-                 lv_obj_get_style_radius(obj, LV_PART_MAIN), lv_obj_get_style_border_width(obj, LV_PART_MAIN),
+                 lv_obj_get_style_radius(obj, LV_PART_MAIN), border,
+                 border_sides & LV_BORDER_SIDE_TOP ? border : 0, border_sides & LV_BORDER_SIDE_RIGHT ? border : 0,
+                 border_sides & LV_BORDER_SIDE_BOTTOM ? border : 0, border_sides & LV_BORDER_SIDE_LEFT ? border : 0,
                  font ? font->line_height : 0, lv_obj_get_style_text_align(obj, LV_PART_MAIN),
                  lv_obj_has_state(obj, LV_STATE_CHECKED), lv_obj_has_state(obj, LV_STATE_DISABLED));
     uint32_t count = lv_obj_get_child_count(obj);

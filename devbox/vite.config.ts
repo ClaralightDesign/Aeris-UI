@@ -6,5 +6,6 @@ export default defineConfig({
   base: './',
   publicDir: false,
   plugins: [react(), tailwindcss()],
+  optimizeDeps: { exclude: ['@jsquash/webp'] },
   server: { watch: { ignored: ['**/target/**'] } },
 });

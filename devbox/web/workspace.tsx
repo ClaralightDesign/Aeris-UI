@@ -1,31 +1,37 @@
-import { Button, Popover, Switch } from '@heroui/react';
+import { Button, Popover } from '@heroui/react';
+import { ArrowClockwiseIcon } from '@phosphor-icons/react/dist/csr/ArrowClockwise';
+import { BroomIcon } from '@phosphor-icons/react/dist/csr/Broom';
+import { CameraPlusIcon } from '@phosphor-icons/react/dist/csr/CameraPlus';
+import { CaretDownIcon } from '@phosphor-icons/react/dist/csr/CaretDown';
+import { CheckIcon } from '@phosphor-icons/react/dist/csr/Check';
+import { CircleIcon } from '@phosphor-icons/react/dist/csr/Circle';
+import { CodeBlockIcon } from '@phosphor-icons/react/dist/csr/CodeBlock';
+import { CommandIcon } from '@phosphor-icons/react/dist/csr/Command';
+import { FadersIcon } from '@phosphor-icons/react/dist/csr/Faders';
+import { HammerIcon } from '@phosphor-icons/react/dist/csr/Hammer';
+import { LinkIcon } from '@phosphor-icons/react/dist/csr/Link';
+import { MagnifyingGlassPlusIcon } from '@phosphor-icons/react/dist/csr/MagnifyingGlassPlus';
+import { ProhibitInsetIcon } from '@phosphor-icons/react/dist/csr/ProhibitInset';
+import { RectangleIcon } from '@phosphor-icons/react/dist/csr/Rectangle';
+import { RectangleDashedIcon } from '@phosphor-icons/react/dist/csr/RectangleDashed';
+import { RulerIcon } from '@phosphor-icons/react/dist/csr/Ruler';
+import { SidebarSimpleIcon } from '@phosphor-icons/react/dist/csr/SidebarSimple';
+import { TerminalWindowIcon } from '@phosphor-icons/react/dist/csr/TerminalWindow';
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import Scritto from '@scritto/react';
 import { Inspector } from './inspector';
+import { BoxHighlight, ElementCard } from './element-overlay';
 import { Console, logLevel, type Log } from './console';
+import { Sources } from './sources';
+import { Smooth, popoverStroke } from './smooth';
+import { MAX_ZOOM, MIN_ZOOM, useCanvasViewport } from './canvas-viewport';
 import { nodeName, pickNode, width, type PreviewWindow, type Snapshot } from './preview';
 import logo from './assets/VerisDevBox.svg';
-import caret from './assets/CaretDown.svg';
-import rulerIcon from './assets/Ruler.svg';
-import zoomIcon from './assets/MagnifyingGlassPlus.svg';
-import code from './assets/CodeBlock.svg';
-import camera from './assets/CameraPlus.svg';
-import controls from './assets/Faders.svg';
 import picker from './assets/PaperPlaneTilt.svg';
-import prohibitRed from './assets/ProhibitInsetRed.svg';
-import errorDot from './assets/ErrorDot.svg';
-import commandKey from './assets/Command.svg';
-import tooltipArrow from './assets/TooltipArrow.svg';
-import captureFull from './assets/CaptureFull.svg';
-import captureArea from './assets/CaptureArea.svg';
 import recordFull from './assets/RecordFull.svg';
 import recordArea from './assets/RecordArea.svg';
-import checkIcon from './assets/Check.svg';
-import panelLeft from './assets/PanelLeft.svg';
-import panelRight from './assets/PanelRight.svg';
-import panelBottom from './assets/PanelBottom.svg';
-import errorIcon from './assets/ProhibitInset.svg';
-import { downloadBlob, encodeAnimatedWebp, encodeGif, type RecordedFrame } from './export';
+import { downloadBlob, encodeAnimatedWebp, encodeGif, encodeScreenshot, type RecordedFrame } from './export';
 import './workspace.css';
 
 const views = ['元素', '控制台', '源代码', '资源', '性能', '图层'] as const;
@@ -37,8 +43,15 @@ type Project = {
   status: Status;
   hasPreview: boolean;
   logs: Omit<Log, 'source'>[];
+  demo?: boolean;
 };
 type Source = { name: string; text: string };
+type AgentAccess = 'cli' | 'mcp';
+type AgentSettings = Record<AgentAccess, boolean> & { cliSession?: string; mcpConfig?: object };
+const agentOptions = [
+  { kind: 'cli', label: 'Agent CLI', icon: TerminalWindowIcon, copy: '复制会话路径' },
+  { kind: 'mcp', label: 'MCP', icon: LinkIcon, copy: '复制 MCP 配置' },
+] as const;
 const EMPTY_SNAPSHOT: Snapshot = { height: 480, nodes: [], frameTime: 0, memoryBytes: 0 };
 const RULER_STEP = 10;
 const RULER_LABEL = 50;
@@ -48,14 +61,15 @@ const INSPECTOR_PULL = 14;
 const RULER_TICKS = Array.from({ length: Math.floor(width / RULER_STEP) + 1 }, (_, index) => index * RULER_STEP);
 const placements = ['left', 'right', 'bottom'] as const;
 type Placement = typeof placements[number];
-const placementInfo: Record<Placement, { title: string; icon: string }> = {
-  left: { title: '左侧', icon: panelLeft },
-  right: { title: '右侧', icon: panelRight },
-  bottom: { title: '下侧', icon: panelBottom },
-};
+const placementLabels: Record<Placement, string> = { left: '左侧', right: '右侧', bottom: '下侧' };
+
+function PlacementIcon({ placement }: { placement: Placement }) {
+  return <SidebarSimpleIcon className="debug-placement-icon" data-placement={placement} size={16} aria-hidden="true" />;
+}
 
 type CaptureMode = 'screen-shot' | 'area-shot' | 'screen-video' | 'area-video';
 type CaptureFormat = 'mp4' | 'webp' | 'gif';
+type ScreenshotFormat = 'png' | 'webp' | 'jpg';
 type CaptureRect = { x: number; y: number; width: number; height: number };
 type RecordingSession = {
   mode: 'screen' | 'area';
@@ -74,14 +88,16 @@ type RecordingSession = {
   autoStop?: number;
   cancelled: boolean;
 };
-const captureModes: Record<CaptureMode, { title: string; action: string; icon: string }> = {
-  'screen-shot': { title: '全屏截图', action: '开始截图', icon: captureFull },
-  'area-shot': { title: '区域截图', action: '开始截图', icon: captureArea },
-  'screen-video': { title: '全屏录屏', action: '开始录制', icon: recordFull },
-  'area-video': { title: '区域录屏', action: '开始录制', icon: recordArea },
+const captureModes: Record<CaptureMode, { title: string; action: string }> = {
+  'screen-shot': { title: '全屏截图', action: '开始截图' },
+  'area-shot': { title: '区域截图', action: '开始截图' },
+  'screen-video': { title: '全屏录屏', action: '开始录制' },
+  'area-video': { title: '区域录屏', action: '开始录制' },
 };
 const captureOrder: CaptureMode[] = ['screen-shot', 'area-shot', 'screen-video', 'area-video'];
 const captureFormats: CaptureFormat[] = ['mp4', 'webp', 'gif'];
+const screenshotFormats: ScreenshotFormat[] = ['png', 'webp', 'jpg'];
+const imageTypes: Record<ScreenshotFormat, string> = { png: 'image/png', webp: 'image/webp', jpg: 'image/jpeg' };
 const captureRates = [60, 30, 15];
 
 function effectiveFps(format: CaptureFormat, fps: number) {
@@ -98,10 +114,6 @@ function initialInspectorWidth() {
   return Math.min(Math.max(preferred, INSPECTOR_MIN), inspectorLimit());
 }
 
-function Icon({ src }: { src: string }) {
-  return <img className="debug-asset" src={src} alt="" />;
-}
-
 function formatDuration(milliseconds: number) {
   const seconds = Math.max(0, Math.floor(milliseconds / 1000));
   return `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
@@ -113,11 +125,42 @@ function CaptureModeButton({ mode, selected, onSelect, onHover }: {
   onSelect: () => void;
   onHover: (mode?: CaptureMode) => void;
 }) {
-  return <button type="button" className="debug-capture-mode" aria-pressed={selected} aria-label={captureModes[mode].title}
+  return <Smooth radius={12}><button type="button" className="debug-capture-mode" aria-pressed={selected} aria-label={captureModes[mode].title}
     onMouseEnter={() => onHover(mode)} onMouseLeave={() => onHover(undefined)}
     onFocus={() => onHover(mode)} onBlur={() => onHover(undefined)} onClick={onSelect}>
-    <img className="debug-capture-icon" src={captureModes[mode].icon} alt="" />
-  </button>;
+    {mode === 'screen-shot' ? <RectangleIcon className="debug-capture-icon" size={24} aria-hidden="true" />
+      : mode === 'area-shot' ? <RectangleDashedIcon className="debug-capture-icon" size={24} aria-hidden="true" />
+      : <img className="debug-capture-icon" src={mode === 'screen-video' ? recordFull : recordArea} alt="" />}
+  </button></Smooth>;
+}
+
+function ZoomPercentInput({ percent, onChange }: { percent: number; onChange: (percent: number) => void }) {
+  const [draft, setDraft] = useState<string>();
+  const formatted = percent.toFixed(1);
+
+  function commit() {
+    if (draft?.trim()) {
+      const value = Number(draft);
+      if (Number.isFinite(value)) onChange(Math.round(value * 10) / 10);
+    }
+    setDraft(undefined);
+  }
+
+  return <Smooth radius={8}><label className="debug-zoom-value">
+    <input type="number" inputMode="decimal" min={MIN_ZOOM} max={MAX_ZOOM} step={0.1}
+      aria-label="缩放百分比" value={draft ?? formatted}
+      onChange={(event) => setDraft(event.target.value)} onBlur={commit}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          commit();
+        } else if (event.key === 'Escape' && draft !== undefined) {
+          event.stopPropagation();
+          setDraft(undefined);
+        }
+      }} />
+    <span aria-hidden="true">%</span>
+  </label></Smooth>;
 }
 
 function Hint({ label, keys, children, hidden }: { label: string; keys?: ReactNode; children: ReactNode; hidden?: boolean }) {
@@ -152,11 +195,11 @@ function Hint({ label, keys, children, hidden }: { label: string; keys?: ReactNo
     {children}
     {open && !hidden && createPortal(
       <span className="debug-tooltip" style={{ top: position.top, left: position.left }} role="tooltip">
-        <img className="debug-tooltip-arrow" src={tooltipArrow} alt="" />
-        <span className="debug-tooltip-body">
+        <span className="debug-tooltip-arrow" aria-hidden="true" />
+        <Smooth radius={8}><span className="debug-tooltip-body" data-shortcut={!!keys}>
           <span className="debug-tooltip-label">{label}</span>
           {keys && <span className="debug-tooltip-keys">{keys}</span>}
-        </span>
+        </span></Smooth>
       </span>,
       document.body,
     )}
@@ -174,9 +217,9 @@ function Ruler({ axis, size, cursor }: { axis: 'x' | 'y'; size: number; cursor?:
     </span>)}
     {cursor !== undefined && <>
       <span className="debug-ruler-cursor" style={place(cursor)} />
-      <span className="debug-ruler-value" data-edge={edge} style={place(cursor)}>{Math.round(cursor)}</span>
+      <Smooth radius={2}><span className="debug-ruler-value" data-edge={edge} style={place(cursor)}>{Math.round(cursor)}</span></Smooth>
     </>}
-    {(cursor === undefined || cursor < size - RULER_EDGE) && <span className="debug-ruler-size">{Math.round(size)}</span>}
+    {(cursor === undefined || cursor < size - RULER_EDGE) && <Smooth radius={2}><span className="debug-ruler-size">{Math.round(size)}</span></Smooth>}
   </div>;
 }
 
@@ -186,7 +229,7 @@ export function Component() {
   const [sceneId, setSceneId] = useState(() => new URLSearchParams(location.search).get('scene'));
   const scene = project?.scenes.find((item) => item.id === sceneId) ?? project?.scenes[0];
   const [hasPreview, setHasPreview] = useState(false);
-  const [source, setSource] = useState<Source>();
+  const [sourceRevision, setSourceRevision] = useState(0);
   const [snapshot, setSnapshot] = useState<Snapshot>(EMPTY_SNAPSHOT);
   const [generation, setGeneration] = useState(0);
   const [status, setStatus] = useState<Status>('ready');
@@ -197,9 +240,9 @@ export function Component() {
   const [picking, setPicking] = useState(false);
   const [scenesOpen, setScenesOpen] = useState(false);
   const [ruler, setRuler] = useState(false);
-  const [zoom, setZoom] = useState(1);
   const [autoRefresh, setAutoRefresh] = useState(() => localStorage.getItem('aeris-debug-auto-refresh') !== 'off');
   const [selectedId, select] = useState<number>();
+  const [canvasSelection, setCanvasSelection] = useState<number>();
   const [hoverId, hover] = useState<number>();
   const [measure, setMeasure] = useState<{ x: number; y: number }>();
   const [frameReady, setFrameReady] = useState(0);
@@ -216,11 +259,15 @@ export function Component() {
   const [captureMode, setCaptureMode] = useState<CaptureMode>('screen-video');
   const [captureHover, setCaptureHover] = useState<CaptureMode>();
   const [captureFormat, setCaptureFormat] = useState<CaptureFormat>('mp4');
+  const [screenshotFormat, setScreenshotFormat] = useState<ScreenshotFormat>('png');
   const [captureRate, setCaptureRate] = useState(60);
   const [captureCursor, setCaptureCursor] = useState(true);
   const [captureSettings, setCaptureSettings] = useState(false);
   const [zoomOpen, setZoomOpen] = useState(false);
   const [controlsOpen, setControlsOpen] = useState(false);
+  const [agentSettings, setAgentSettings] = useState<AgentSettings>();
+  const [agentUpdating, setAgentUpdating] = useState(false);
+  const [buildRequest, setBuildRequest] = useState(false);
   const [areaMode, setAreaMode] = useState<'shot' | 'video'>();
   const [area, setArea] = useState<CaptureRect>();
   const [recording, setRecording] = useState<{ mode: 'screen' | 'area'; format: CaptureFormat; startedAt: number }>();
@@ -240,14 +287,64 @@ export function Component() {
   const pointer = useRef<{ x: number; y: number } | undefined>(undefined);
   const noticeTimer = useRef<number>(undefined);
   const savedTimer = useRef<number>(undefined);
+  const stage = useRef<HTMLDivElement>(null);
   const preview = useRef<HTMLIFrameElement>(null);
   const refreshEnabled = useRef(autoRefresh);
 
+  useEffect(() => {
+    if (!controlsOpen) return;
+    const controller = new AbortController();
+    const { signal } = controller;
+    fetch('/devbox-agent-settings', { signal, cache: 'no-store' })
+      .then((response) => {
+        if (!response.ok) throw new Error();
+        return response.json() as Promise<AgentSettings>;
+      })
+      .then((settings) => { if (!signal.aborted) setAgentSettings(settings); })
+      .catch(() => { if (!signal.aborted) setNotice('无法读取 Agent 设置'); });
+    return () => controller.abort();
+  }, [controlsOpen]);
+
+  async function toggleAgent(kind: AgentAccess) {
+    if (!agentSettings || agentUpdating) return;
+    setAgentUpdating(true);
+    setNotice('');
+    try {
+      const response = await fetch('/devbox-agent-settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind, enabled: !agentSettings[kind] }),
+      });
+      if (!response.ok) throw new Error();
+      setAgentSettings(await response.json());
+    } catch {
+      setNotice('无法更新 Agent 设置');
+    } finally {
+      setAgentUpdating(false);
+    }
+  }
+
+  async function requestBuild(mode: 'rebuild' | 'clean') {
+    setBuildRequest(true);
+    setNotice(mode === 'clean' ? '等待清理缓存并重新构建' : '等待重新构建');
+    try {
+      const response = await fetch('/devbox-build?' + new URLSearchParams({ mode }), { method: 'POST' });
+      if (!response.ok) throw new Error();
+    } catch {
+      setNotice('无法请求重新构建');
+    } finally {
+      setBuildRequest(false);
+    }
+  }
+
   const previewParams = new URLSearchParams({ scene: scene?.id ?? '', debug: '1', revision: String(generation) });
   const previewUrl = '/preview.html?' + previewParams;
+  const { viewport, scale, space, dragging, reset, setPercent } = useCanvasViewport(stage, preview, frameReady, previewUrl);
   const renderer = () => (preview.current?.contentWindow as PreviewWindow | null)?.aerisDebugger;
   const selected = snapshot.nodes.find((node) => node.id === selectedId) ?? snapshot.nodes[0];
-  const highlighted = snapshot.nodes.find((node) => node.id === hoverId) ?? (ruler || picking ? selected : undefined);
+  const inspected = inspectorOpen && view === '元素' && !areaMode
+    ? snapshot.nodes.find((node) => node.id === hoverId && !node.hidden) : undefined;
+  const highlighted = inspected ?? (ruler ? selected : undefined);
   const errorCount = logs.filter((entry) => entry.level === 'error').length;
 
   function append(log: Log) {
@@ -277,6 +374,7 @@ export function Component() {
   useEffect(() => {
     setSnapshot(EMPTY_SNAPSHOT);
     select(undefined);
+    setCanvasSelection(undefined);
     hover(undefined);
     const timer = window.setInterval(() => {
       const next = renderer()?.snapshot();
@@ -315,11 +413,15 @@ export function Component() {
         if (!startup.signal.aborted) setProjectError(true);
       }
     }
-    function build({ status: next }: { status: Status }) {
+    function build({ status: next, refresh }: { status: Status; refresh?: boolean }) {
       setStatus(next);
+      if (refresh) setNotice((current) => current.startsWith('等待')
+        ? next === 'ready' ? '构建完成，已刷新预览' : '构建失败，请查看控制台'
+        : current);
       if (next === 'ready') {
+        setSourceRevision((value) => value + 1);
         setHasPreview(true);
-        if (refreshEnabled.current) setGeneration((value) => value + 1);
+        if (refresh || refreshEnabled.current) setGeneration((value) => value + 1);
         void loadProject();
       }
     }
@@ -417,37 +519,12 @@ export function Component() {
     window.addEventListener('pointercancel', finish);
   }
 
-  function saveScreenshot() {
-    const url = renderer()?.screenshot();
-    if (!url) {
-      notifyCapture('截图失败');
-      return;
-    }
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = (scene?.id ?? project?.title ?? 'aeris') + '.png';
-    link.click();
-    markSaved('已保存为 PNG');
-  }
-
   function changeScene(id: string) {
     const url = new URL(location.href);
     url.searchParams.set('scene', id);
     history.replaceState(null, '', url);
     setSceneId(id);
   }
-
-  useEffect(() => {
-    setSource(undefined);
-    if (view !== '源代码' || !project) return;
-    const request = new AbortController();
-    void fetch('/devbox-source?' + new URLSearchParams({ scene: scene?.id ?? '' }), { signal: request.signal })
-      .then(async (response) => {
-        if (response.ok && !request.signal.aborted) setSource(await response.json());
-      })
-      .catch(() => {});
-    return () => request.abort();
-  }, [project, scene?.id, view, generation]);
 
   function openView(next: View) {
     setView(next);
@@ -500,24 +577,33 @@ export function Component() {
     context.restore();
   }
 
-  async function saveAreaScreenshot(region: CaptureRect) {
-    const url = renderer()?.screenshot();
-    if (!url) return;
-    const image = new Image();
-    image.src = url;
-    await image.decode();
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.max(1, Math.round(region.width));
-    canvas.height = Math.max(1, Math.round(region.height));
-    canvas.getContext('2d')!.drawImage(
-      image, region.x, region.y, region.width, region.height, 0, 0, canvas.width, canvas.height,
-    );
-    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
-    if (blob) {
-      downloadBlob(blob, `${captureBaseName()}-area.png`);
-      markSaved('已保存为 PNG');
-    } else {
-      notifyCapture('截图失败');
+  async function saveScreenshot(format: ScreenshotFormat, region?: CaptureRect) {
+    const mime = imageTypes[format];
+    try {
+      const url = renderer()?.screenshot();
+      if (!url) throw new Error();
+      const name = captureBaseName() + (region ? '-area' : '') + '.' + format;
+      if (format === 'png' && !region) {
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = name;
+        link.click();
+      } else {
+        const image = new Image();
+        image.src = url;
+        await image.decode();
+        const crop = region ?? { x: 0, y: 0, width: image.naturalWidth, height: image.naturalHeight };
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(crop.width));
+        canvas.height = Math.max(1, Math.round(crop.height));
+        const context = canvas.getContext('2d');
+        if (!context) throw new Error();
+        context.drawImage(image, crop.x, crop.y, crop.width, crop.height, 0, 0, canvas.width, canvas.height);
+        downloadBlob(await encodeScreenshot(canvas, mime), name);
+      }
+      markSaved(`已保存为 ${format.toUpperCase()}`);
+    } catch {
+      notifyCapture(`无法导出 ${format.toUpperCase()} 截图`);
     }
   }
 
@@ -654,7 +740,7 @@ export function Component() {
     setCaptureOpen(false);
     setCaptureSettings(false);
     if (captureMode === 'screen-shot') {
-      saveScreenshot();
+      void saveScreenshot(screenshotFormat);
     } else if (captureMode === 'area-shot') {
       setArea(undefined);
       setAreaMode('shot');
@@ -713,7 +799,7 @@ export function Component() {
     setAreaMode(undefined);
     setArea(undefined);
     if (region.width < 4 || region.height < 4) return;
-    if (mode === 'shot') void saveAreaScreenshot(region);
+    if (mode === 'shot') void saveScreenshot(screenshotFormat, region);
     else startRecording('area', region);
   }
 
@@ -918,7 +1004,7 @@ export function Component() {
     const list = tabList.current;
     if (!list) return;
     const update = () => {
-      const button = list.querySelector<HTMLButtonElement>('.debug-pill[aria-pressed="true"]');
+      const button = list.querySelector<HTMLButtonElement>('.debug-pill[data-active="true"]');
       if (!button) return;
       const listRect = list.getBoundingClientRect();
       const buttonRect = button.getBoundingClientRect();
@@ -953,50 +1039,62 @@ export function Component() {
   const shownCapture = captureHover ?? captureMode;
   const captureTitle = captureModes[shownCapture].title;
   const captureAction = captureModes[captureMode].action;
+  const recordingMode = captureMode === 'screen-video' || captureMode === 'area-video';
+  const selectedFormat = recordingMode ? captureFormat : screenshotFormat;
+  const formats = recordingMode
+    ? captureFormats.map((format) => ({ format, select: () => setCaptureFormat(format) }))
+    : screenshotFormats.map((format) => ({ format, select: () => setScreenshotFormat(format) }));
   const activeFps = effectiveFps(captureFormat, captureRate);
   const shortcut = (letter: string) => <>
-    <span className="debug-tooltip-key" data-icon={apple ? 'true' : undefined}>
-      {apple ? <img src={commandKey} alt="" /> : 'Ctrl'}
-    </span>
-    <span className="debug-tooltip-key" data-dim="true">{letter}</span>
+    <Smooth radius={4}><span className="debug-tooltip-key" data-icon={apple ? 'true' : undefined}>
+      {apple ? <CommandIcon size={14} aria-hidden="true" /> : 'Ctrl'}
+    </span></Smooth>
+    <Smooth radius={4}><span className="debug-tooltip-key" data-dim="true">{letter}</span></Smooth>
   </>;
 
   return <main className="debug-workspace" data-inspector={inspectorOpen} data-placement={placement} data-resizing={resizing}
     style={{ '--debug-inspector-width': (inspectorOpen ? inspectorWidth : 0) + 'px' } as CSSProperties}>
-    <section className="debug-preview-panel" aria-label="手表预览">
+    <Smooth radius={8} stroke={{ width: 1, color: "#ffffff", opacity: 0.14 }}><section className="debug-preview-panel" aria-label="手表预览">
       <header className="debug-toolbar">
         <div className="debug-logo"><img src={logo} alt="Aeris DevBox" /></div>
         {project && project.scenes.length === 0 ? <span className="debug-app-title">{project.title}</span> :
         <Popover isOpen={scenesOpen} onOpenChange={setScenesOpen}>
-          <Button variant="ghost" className="debug-target" aria-label="选择场景">
-            <span>{project?.title ?? "Aeris DevBox"}</span>{scene && <span className="debug-target-device"> · {scene.title}</span>}<Icon src={caret} />
-          </Button>
-          <Popover.Content placement="bottom" className="debug-popover-wrap"><Popover.Dialog aria-label="预览场景" className="debug-popover">
+          <Smooth radius={6}><Button variant="ghost" className="debug-target" aria-label="选择场景">
+            <span>{project?.title ?? "Aeris DevBox"}</span>{scene && <span className="debug-target-device"> · {scene.title}</span>}<CaretDownIcon size={12} aria-hidden="true" />
+          </Button></Smooth>
+          <Popover.Content placement="bottom" className="debug-popover-wrap"><Smooth radius={20} stroke={popoverStroke}><Popover.Dialog aria-label="预览场景" className="debug-popover">
             <span className="debug-section-title">预览场景</span>
             {project?.scenes.map((item) => <Button key={item.id} variant="ghost" className="debug-menu-item"
               aria-pressed={scene?.id === item.id} onPress={() => { changeScene(item.id); setScenesOpen(false); }}>
               {item.title}
             </Button>)}
-          </Popover.Dialog></Popover.Content>
+          </Popover.Dialog></Smooth></Popover.Content>
         </Popover>}
         <div className="debug-tools">
           <Hint label="标尺" keys={shortcut('R')}>
-            <Button isIconOnly variant="ghost" className="debug-icon" aria-label="显示标尺" aria-pressed={ruler} onPress={() => setRuler(!ruler)}><Icon src={rulerIcon} /></Button>
+            <Smooth radius={6}><Button isIconOnly variant="ghost" className="debug-icon" aria-label="显示标尺" aria-pressed={ruler} onPress={() => setRuler(!ruler)}><RulerIcon size={18} aria-hidden="true" /></Button></Smooth>
           </Hint>
           <Hint label="缩放" hidden={zoomOpen}>
             <Popover isOpen={zoomOpen} onOpenChange={setZoomOpen}>
-              <Button isIconOnly variant="ghost" className="debug-icon" aria-label="缩放"><Icon src={zoomIcon} /></Button>
-              <Popover.Content className="debug-popover-wrap"><Popover.Dialog aria-label="缩放" className="debug-popover">
+              <Smooth radius={6}><Button isIconOnly variant="ghost" className="debug-icon" aria-label="缩放"><MagnifyingGlassPlusIcon size={18} aria-hidden="true" /></Button></Smooth>
+              <Popover.Content className="debug-popover-wrap"><Smooth radius={20} stroke={popoverStroke}><Popover.Dialog aria-label="缩放" className="debug-popover">
                 <span className="debug-section-title">缩放</span>
-                {[0.75, 1, 1.5, 2].map((scale) => <Button key={scale} variant="ghost" className="debug-menu-item" aria-pressed={zoom === scale} onPress={() => setZoom(scale)}>{scale * 100}%</Button>)}
-              </Popover.Dialog></Popover.Content>
+                <ZoomPercentInput percent={viewport.percent} onChange={setPercent} />
+                <div className="debug-zoom-presets">
+                  {[75, 100, 150, 200].map((percent) => <Smooth key={percent} radius={8}>
+                    <Button variant="ghost" className="debug-menu-item"
+                      aria-pressed={viewport.percent === percent} onPress={() => setPercent(percent)}>{percent}%</Button>
+                  </Smooth>)}
+                </div>
+                <Smooth radius={8}><Button variant="ghost" className="debug-menu-item" onPress={reset}>重置视图</Button></Smooth>
+              </Popover.Dialog></Smooth></Popover.Content>
             </Popover>
           </Hint>
           <Hint label="检查面板" keys={shortcut('I')}>
-            <Button isIconOnly variant="ghost" className="debug-icon" aria-label="显示检查面板"
-              aria-pressed={inspectorOpen} onPress={() => { setInspectorOpen(!inspectorOpen); setPicking(false); hover(undefined); }}><Icon src={code} /></Button>
+            <Smooth radius={6}><Button isIconOnly variant="ghost" className="debug-icon" aria-label="显示检查面板"
+              aria-pressed={inspectorOpen} onPress={() => { setInspectorOpen(!inspectorOpen); setPicking(false); hover(undefined); }}><CodeBlockIcon size={18} aria-hidden="true" /></Button></Smooth>
           </Hint>
-          <div className="debug-capture-slot" data-state={pill}>
+          <Smooth radius={6}><div className="debug-capture-slot" data-status={pill}>
             <span className="debug-capture-idle" inert={pill !== 'idle'} aria-hidden={pill !== 'idle'}>
               <Hint label="录屏" keys={shortcut('S')} hidden={captureOpen || pill !== 'idle'}>
                 <Popover isOpen={captureOpen} onOpenChange={(open) => {
@@ -1006,10 +1104,10 @@ export function Component() {
                     setCaptureHover(undefined);
                   }
                 }}>
-                  <Button isIconOnly variant="ghost" className="debug-icon" aria-label="截图与录屏"
-                    isDisabled={!snapshot.nodes.length || pill !== 'idle'}><Icon src={camera} /></Button>
-                  <Popover.Content placement="bottom end" className="debug-capture-popover"><Popover.Dialog className="debug-capture" aria-label="截图与录屏">
-                    <span className="debug-capture-title">{captureTitle}</span>
+                  <Smooth radius={6}><Button isIconOnly variant="ghost" className="debug-icon" aria-label="截图与录屏"
+                    isDisabled={!snapshot.nodes.length || pill !== 'idle'}><CameraPlusIcon size={18} aria-hidden="true" /></Button></Smooth>
+                  <Popover.Content placement="bottom end" className="debug-capture-popover"><Smooth radius={20} stroke={popoverStroke}><Popover.Dialog className="debug-capture" aria-label="截图与录屏">
+                    <span className="debug-capture-title"><Scritto value={captureTitle} /></span>
                     <div className="debug-capture-modes">
                       {captureOrder.slice(0, 2).map((mode) => <CaptureModeButton key={mode} mode={mode}
                         selected={captureMode === mode} onSelect={() => setCaptureMode(mode)} onHover={setCaptureHover} />)}
@@ -1017,37 +1115,57 @@ export function Component() {
                       {captureOrder.slice(2).map((mode) => <CaptureModeButton key={mode} mode={mode}
                         selected={captureMode === mode} onSelect={() => setCaptureMode(mode)} onHover={setCaptureHover} />)}
                     </div>
-                    <button type="button" className="debug-capture-settings-row" aria-expanded={captureSettings}
+                    <Smooth radius={8}><button type="button" className="debug-capture-settings-row" aria-expanded={captureSettings}
                       onClick={() => setCaptureSettings(!captureSettings)}>
-                      <span className="debug-capture-value">{captureFormat.toUpperCase()}</span>
-                      <span className="debug-capture-dot">·</span>
-                      <span className="debug-capture-value">{activeFps}HZ</span>
-                      <span className="debug-capture-dot">·</span>
-                      <span className="debug-capture-cursor-label">{captureCursor ? '录制鼠标指针' : '不录制指针'}</span>
-                      <Icon src={caret} />
-                    </button>
-                    {captureSettings && <div className="debug-capture-settings">
+                      <Scritto className="debug-capture-value" value={selectedFormat.toUpperCase()} />
+                      <span className="debug-capture-video-summary" data-visible={recordingMode} aria-hidden={!recordingMode}>
+                        <span>
+                          <span className="debug-capture-dot">·</span>
+                          <Scritto className="debug-capture-value" value={`${activeFps}HZ`} />
+                          <span className="debug-capture-dot">·</span>
+                          <Scritto className="debug-capture-cursor-label" value={captureCursor ? '录制鼠标指针' : '不录制指针'} />
+                        </span>
+                      </span>
+                      <CaretDownIcon size={12} aria-hidden="true" />
+                    </button></Smooth>
+                    {captureSettings && <Smooth radius={10}><div className="debug-capture-settings">
                       <div className="debug-capture-setting">
                         <span>格式</span>
                         <div className="debug-capture-segments">
-                          {captureFormats.map((format) => <button key={format} type="button" aria-pressed={captureFormat === format}
-                            onClick={() => setCaptureFormat(format)}>{format.toUpperCase()}</button>)}
+                          {formats.map(({ format, select }, index) => <Smooth key={index} radius={6}>
+                            <button type="button" aria-pressed={selectedFormat === format} aria-label={format.toUpperCase()} onClick={select}>
+                              <Scritto value={format.toUpperCase()} aria-hidden="true" />
+                            </button>
+                          </Smooth>)}
                         </div>
                       </div>
-                      <div className="debug-capture-setting">
-                        <span>帧率</span>
-                        <div className="debug-capture-segments">
-                          {captureRates.map((rate) => <button key={rate} type="button" aria-pressed={captureRate === rate}
-                            onClick={() => setCaptureRate(rate)}>{rate}HZ</button>)}
+                      <div className="debug-capture-video-settings" data-visible={recordingMode} inert={!recordingMode}>
+                        <div>
+                          <div className="debug-capture-setting">
+                            <span>帧率</span>
+                            <div className="debug-capture-segments">
+                              {captureRates.map((rate) => <Smooth key={rate} radius={6}>
+                                <button type="button" aria-pressed={captureRate === rate} onClick={() => setCaptureRate(rate)}>{rate}HZ</button>
+                              </Smooth>)}
+                            </div>
+                          </div>
+                          <label className="debug-capture-cursor">
+                            <input className="debug-sr-only" type="checkbox" checked={captureCursor}
+                              onChange={(event) => setCaptureCursor(event.target.checked)} />
+                            <span className="debug-capture-checkbox">
+                              <Smooth radius={4} stroke={{ width: 1, color: '#ffffff', opacity: 0.3 }}>
+                                <span className="debug-capture-checkbox-mark"><CheckIcon size={11} weight="bold" aria-hidden="true" /></span>
+                              </Smooth>
+                            </span>
+                            录制鼠标指针
+                          </label>
                         </div>
                       </div>
-                      <label className="debug-capture-cursor">
-                        <input type="checkbox" checked={captureCursor} onChange={(event) => setCaptureCursor(event.target.checked)} />
-                        录制鼠标指针
-                      </label>
-                    </div>}
-                    <button type="button" className="debug-capture-start" onClick={beginCapture}>{captureAction}</button>
-                  </Popover.Dialog></Popover.Content>
+                    </div></Smooth>}
+                    <Smooth radius={12}><button type="button" className="debug-capture-start" aria-label={captureAction} onClick={beginCapture}>
+                      <Scritto value={captureAction} aria-hidden="true" />
+                    </button></Smooth>
+                  </Popover.Dialog></Smooth></Popover.Content>
                 </Popover>
               </Hint>
             </span>
@@ -1061,60 +1179,125 @@ export function Component() {
               <span className="debug-capture-pill-layer" data-content="record">
                 <img className="debug-capture-pill-icon" src={recordFull} alt="" />
                 <span className="debug-capture-pill-time">
-                  {pill === 'exporting' ? `导出 ${Math.round(exportProgress * 100)}%` : formatDuration(recordTime)}
+                  <Scritto value={pill === 'exporting' ? `导出 ${Math.round(exportProgress * 100)}%` : formatDuration(recordTime)}
+                    trend={1} aria-hidden="true" />
                 </span>
               </span>
               <span className="debug-capture-pill-layer" data-content="saved">
-                <img className="debug-capture-pill-icon" src={checkIcon} alt="" />
+                <CheckIcon size={18} aria-hidden="true" />
                 <span className="debug-capture-pill-saved">{savedLabel}</span>
               </span>
             </button>}
-          </div>
+          </div></Smooth>
           <Hint label="设置" keys={shortcut('E')} hidden={controlsOpen}>
-          <Popover isOpen={controlsOpen} onOpenChange={setControlsOpen}>
-            <Button isIconOnly variant="ghost" className="debug-icon" aria-label="预览控制"><Icon src={controls} /></Button>
-            <Popover.Content placement="bottom end" className="debug-popover-wrap"><Popover.Dialog className="debug-popover debug-preview-menu" aria-label="预览控制">
-              <div className="debug-menu-actions">
-                <Button size="sm" variant="secondary" onPress={() => setGeneration((value) => value + 1)}>重载</Button>
-                <Button size="sm" variant="secondary" onPress={async () => {
-                  try { await navigator.clipboard.writeText(location.href); setNotice('已复制预览链接'); }
-                  catch { setNotice('无法复制预览链接'); }
-                }}>复制链接</Button>
-                <Button size="sm" variant="secondary" isDisabled={!snapshot.nodes.length} onPress={saveScreenshot}>截图</Button>
-              </div>
-              <span className="debug-section-title">{scene ? "当前场景" : "应用"}</span>
-              <span>{scene?.title ?? project?.title ?? '等待项目加载'}</span>
-              <Switch isSelected={autoRefresh} onChange={setAutoRefresh}>
-                <Switch.Control><Switch.Thumb /></Switch.Control><Switch.Content>保存后自动刷新</Switch.Content>
-              </Switch>
-              <footer>小米手环 10 Pro · 336 × 480</footer>
-              <span role="status">{notice}</span>
-            </Popover.Dialog></Popover.Content>
-          </Popover>
+            <Popover isOpen={controlsOpen} onOpenChange={setControlsOpen}>
+              <Smooth radius={6}><Button isIconOnly variant="ghost" className="debug-icon" aria-label="设置"><FadersIcon size={18} aria-hidden="true" /></Button></Smooth>
+              <Popover.Content placement="bottom end" className="debug-popover-wrap">
+                <Smooth radius={20} stroke={popoverStroke}><Popover.Dialog className="debug-popover debug-preview-menu" aria-label="设置">
+                  <div className="debug-preview-actions">
+                    <Smooth radius={12}><Button variant="ghost" onPress={() => setGeneration((value) => value + 1)}>
+                      <ArrowClockwiseIcon size={16} aria-hidden="true" />重载
+                    </Button></Smooth>
+                    <Smooth radius={12}><Button variant="ghost" onPress={async () => {
+                      try { await navigator.clipboard.writeText(location.href); setNotice('已复制预览链接'); }
+                      catch { setNotice('无法复制预览链接'); }
+                    }}>
+                      <LinkIcon size={16} aria-hidden="true" />复制链接
+                    </Button></Smooth>
+                    <Smooth radius={12}><Button variant="ghost" isDisabled={!snapshot.nodes.length} onPress={() => void saveScreenshot('png')}>
+                      <CameraPlusIcon size={18} aria-hidden="true" />截图
+                    </Button></Smooth>
+                  </div>
+                  <div className="debug-preview-actions debug-preview-build">
+                    <Smooth radius={12}><Button variant="ghost" isDisabled={!project || buildRequest}
+                      onPress={() => void requestBuild('rebuild')}>
+                      <HammerIcon size={16} aria-hidden="true" />重新构建
+                    </Button></Smooth>
+                    <Smooth radius={12}><Button variant="ghost" isDisabled={!project || project.demo || buildRequest}
+                      onPress={() => void requestBuild('clean')}>
+                      <BroomIcon size={16} aria-hidden="true" />清理构建缓存
+                    </Button></Smooth>
+                  </div>
+                  <div className="debug-preview-section">
+                    <div className="debug-preview-context">
+                      <h2>{scene ? '当前场景' : '应用'}</h2>
+                      <span title={scene?.title ?? project?.title}>{scene?.title ?? project?.title ?? '等待项目加载'}</span>
+                    </div>
+                    <Smooth radius={12}><button type="button" className="debug-preview-setting" role="switch"
+                      aria-checked={autoRefresh} aria-label="保存后自动刷新" onClick={() => setAutoRefresh((enabled) => !enabled)}>
+                      <Smooth radius="capsule"><span className="debug-preview-setting-icon"><ArrowClockwiseIcon size={16} aria-hidden="true" /></span></Smooth>
+                      <span className="debug-preview-setting-label">
+                        <span>保存后自动刷新</span>
+                        <span>{autoRefresh ? '已开启' : '已关闭'}</span>
+                      </span>
+                    </button></Smooth>
+                  </div>
+                  <div className="debug-preview-section">
+                    {agentOptions.map(({ kind, label, icon: Icon, copy }) => {
+                      const enabled = agentSettings?.[kind] ?? false;
+                      const connection = kind === 'cli' ? agentSettings?.cliSession : agentSettings?.mcpConfig;
+                      return <div className="debug-agent-setting" key={kind}>
+                        <Smooth radius={12}><button type="button" className="debug-preview-setting"
+                          role="switch" aria-label={label} aria-checked={enabled}
+                          disabled={!agentSettings || agentUpdating} onClick={() => void toggleAgent(kind)}>
+                          <Smooth radius="capsule"><span className="debug-preview-setting-icon"><Icon size={16} aria-hidden="true" /></span></Smooth>
+                          <span className="debug-preview-setting-label">
+                            <span>{label}</span>
+                            <span>{agentSettings ? enabled ? '已开启' : '已关闭' : '读取设置中'}</span>
+                          </span>
+                        </button></Smooth>
+                        {enabled && connection && <Button variant="ghost" className="debug-agent-copy" onPress={async () => {
+                          const value = typeof connection === 'string' ? connection : JSON.stringify(connection, null, 2);
+                          try {
+                            await navigator.clipboard.writeText(value);
+                            setNotice('已' + copy);
+                          } catch {
+                            setNotice('无法' + copy);
+                          }
+                        }}>{copy}</Button>}
+                      </div>;
+                    })}
+                  </div>
+                  <footer className="debug-preview-footer">
+                    <span>小米手环 10 Pro · 336 × 480</span>
+                    <span className="debug-preview-notice" role="status">{notice}</span>
+                  </footer>
+                </Popover.Dialog></Smooth>
+              </Popover.Content>
+            </Popover>
           </Hint>
         </div>
       </header>
 
-      <div className="debug-stage">
+      <div className="debug-stage" ref={stage} data-ready={hasPreview && !!project}
+        data-pan={dragging ? 'dragging' : space ? 'ready' : undefined}>
         {projectError && <p role="alert" className="debug-empty">无法读取项目配置。</p>}
-        {hasPreview && project && <div className="debug-device-canvas" data-ruler={ruler}>
-          <div className="debug-device-frame" style={{ width: width * zoom, aspectRatio: width + ' / ' + snapshot.height }}>
+        {hasPreview && project && <div className="debug-device-canvas" data-ruler={ruler} style={{
+          width: width * scale, height: snapshot.height * scale,
+          transform: `translate(-50%, -50%) translate(${viewport.x}px, ${viewport.y}px)`,
+        }}>
+          <div className="debug-device-scale" style={{ width, height: snapshot.height, transform: `scale(${scale})` }}>
+          <Smooth radius={40} stroke={{ width: 1, color: "#ffffff", opacity: 0.5 }}><div className="debug-device-frame">
             <iframe key={previewUrl} ref={preview} width={width} height={480} title={(scene?.title ?? project.title) + '预览'} src={previewUrl}
               onLoad={() => setFrameReady((value) => value + 1)} />
-            {highlighted && !highlighted.hidden && <div className="debug-highlight" style={{
-              left: highlighted.x / width * 100 + '%', top: highlighted.y / snapshot.height * 100 + '%',
-              width: highlighted.width / width * 100 + '%', height: highlighted.height / snapshot.height * 100 + '%',
-            }} />}
+            {highlighted && !highlighted.hidden && <BoxHighlight node={highlighted} width={width} height={snapshot.height} />}
             {picking && <div className="debug-pick-surface" onPointerMove={(event) => hover(findAt(event)?.id)}
               onPointerLeave={() => {
                 hover(undefined);
                 setMeasure(undefined);
               }} onPointerDown={(event) => {
+                if (event.button !== 0) return;
+                event.preventDefault();
                 const node = findAt(event);
-                if (node) select(node.id);
+                if (node) {
+                  select(node.id);
+                  setCanvasSelection(node.id);
+                  openView('元素');
+                }
                 hover(undefined);
                 setPicking(false);
               }} />}
+          </div></Smooth>
           </div>
           {ruler && <div className="debug-rulers">
             <span className="debug-ruler-corner">px</span>
@@ -1126,101 +1309,122 @@ export function Component() {
             {area && <div className="debug-area-box" style={{
               left: area.x / width * 100 + '%', top: area.y / snapshot.height * 100 + '%',
               width: area.width / width * 100 + '%', height: area.height / snapshot.height * 100 + '%',
-            }} />}
+            }}><Smooth radius={0} stroke={{ width: 1, color: '#69b6ff', opacity: 1 }}>
+              <div className="debug-area-outline" aria-hidden="true" />
+            </Smooth></div>}
           </div>}
         </div>}
+        {inspected && <ElementCard node={inspected} detailed={picking} canvasWidth={width} canvasHeight={snapshot.height}
+          scale={scale} panX={viewport.x} panY={viewport.y} />}
       </div>
-      {areaMode && <div className="debug-area-hint" role="status">{areaMode === 'shot' ? '拖拽选择截图区域' : '拖拽选择录屏区域'} · Esc 取消</div>}
-      {captureNotice && <div className="debug-capture-notice" role="status">{captureNotice}</div>}
-      {(status === 'building' || status === 'failed') && <div className="debug-update" data-state={status} data-compact={compactStatus}
+      {areaMode && <div className="debug-area-hint">
+        <Smooth radius="capsule" stroke={{ ...popoverStroke, opacity: 0.14 }}>
+          <div className="debug-capture-hint-body" role="status">
+            {areaMode === 'shot' ? '拖拽选择截图区域' : '拖拽选择录屏区域'} · Esc 取消
+          </div>
+        </Smooth>
+      </div>}
+      {captureNotice && <div className="debug-capture-notice">
+        <Smooth radius={10} stroke={{ ...popoverStroke, opacity: 0.14 }}>
+          <div className="debug-capture-hint-body" role="status">{captureNotice}</div>
+        </Smooth>
+      </div>}
+      {(status === 'building' || status === 'failed') && <Smooth radius={status === 'building' ? 'capsule' : 14}><div className="debug-update" data-status={status} data-compact={compactStatus}
         ref={statusRef} role={status === 'failed' ? 'alert' : 'status'} aria-label={status === 'building' ? '正在更新预览' : undefined}>
         <div className="debug-update-pane" data-pane="loading" aria-hidden={status !== 'building'}>
-          <span className="debug-update-track">
-            <span className="debug-update-bar" />
-            <span className="debug-update-bar" />
-          </span>
+          <Smooth radius="capsule"><span className="debug-update-track">
+            <Smooth radius="capsule"><span className="debug-update-bar" /></Smooth>
+            <Smooth radius="capsule"><span className="debug-update-bar" /></Smooth>
+          </span></Smooth>
         </div>
         <div className="debug-update-pane" data-pane="failed" aria-hidden={status !== 'failed'} inert={status !== 'failed'}>
           <div className="debug-update-message">
-            <Icon src={prohibitRed} />
+            <ProhibitInsetIcon size={18} className="debug-update-error-icon" aria-hidden="true" />
             <span>{hasPreview ? '由于构建失败，当前预览未刷新' : '构建失败，暂时没有可预览的版本'}</span>
           </div>
           <div className="debug-update-actions">
             <span className="debug-update-errors">
-              {errorCount > 0 ? <><Icon src={errorDot} />{errorCount}个错误</> : '构建失败'}
+              {errorCount > 0 ? <><span className="debug-update-error-dot" aria-hidden="true">
+                <CircleIcon size={7} weight="fill" />
+              </span>{errorCount}个错误</> : '构建失败'}
             </span>
-            <button type="button" className="debug-update-action" onClick={() => openView('控制台')}>
-              查看详情<span className="debug-update-key">enter</span>
-            </button>
-            <button type="button" className="debug-update-action debug-update-copy" onClick={() => void copyPrompt()}>
+            <Smooth radius={8}><button type="button" className="debug-update-action" onClick={() => openView('控制台')}>
+              查看详情<Smooth radius={4}><span className="debug-update-key">enter</span></Smooth>
+            </button></Smooth>
+            <Smooth radius={8}><button type="button" className="debug-update-action debug-update-copy" onClick={() => void copyPrompt()}>
               <span>{copyState === 'copying' ? '复制中…' : copyState === 'copied' ? '已复制' : copyState === 'failed' ? '复制失败' : '复制提示词'}</span>
               <span className="debug-update-keys">
                 {apple
-                  ? <span className="debug-update-key debug-update-key-icon"><Icon src={commandKey} /></span>
-                  : <span className="debug-update-key">Ctrl</span>}
-                <span className="debug-update-key" data-dim="true">C</span>
+                  ? <Smooth radius={4}><span className="debug-update-key debug-update-key-icon"><CommandIcon size={14} aria-hidden="true" /></span></Smooth>
+                  : <Smooth radius={4}><span className="debug-update-key">Ctrl</span></Smooth>}
+                <Smooth radius={4}><span className="debug-update-key" data-dim="true">C</span></Smooth>
               </span>
-            </button>
+            </button></Smooth>
           </div>
         </div>
-      </div>}
+      </div></Smooth>}
       <span className="debug-sr-only" role="status">{copyState === 'copied' ? '提示词已复制' : copyState === 'failed' ? '无法复制提示词' : copyState === 'copying' ? '正在复制提示词' : ''}</span>
-    </section>
+    </section></Smooth>
 
-    <aside className="debug-inspector" aria-label="检查器" data-console={view === '控制台'} data-placement={placement}
+    <Smooth radius={8}><aside className="debug-inspector" aria-label="检查器" data-console={view === '控制台'} data-placement={placement}
       aria-hidden={!inspectorOpen} inert={!inspectorOpen}>
       <div className="debug-inspector-toolbar">
         <div className="debug-toolbar-slot">
-          <Button isIconOnly variant="ghost" className="debug-icon debug-picker" aria-label="从画布选取元素" aria-pressed={picking}
+          <Smooth radius={6}><Button isIconOnly variant="ghost" className="debug-icon debug-picker" aria-label="从画布选取元素" aria-pressed={picking}
             onPress={() => {
               setPicking(!picking);
               hover(undefined);
               setView('元素');
-            }}><Icon src={picker} /></Button>
+            }}><img className="debug-picker-asset" src={picker} alt="" /></Button></Smooth>
         </div>
         <nav className="debug-main-tabs" aria-label="调试面板">
           <div className="debug-main-tabs-inner" ref={tabList}>
-            <span className="debug-tab-indicator" aria-hidden="true" data-ready={indicatorReady}
-              style={{ transform: `translate(${indicator.left}px, -50%)`, width: indicator.width }} />
+            <Smooth radius="capsule"><span className="debug-tab-indicator" aria-hidden="true" data-ready={indicatorReady}
+              style={{ transform: `translate(${indicator.left}px, -50%)`, width: indicator.width }} /></Smooth>
             {views.map((name, index) => <span className="debug-main-tab" key={name}>
               {index > 0 && <span className="debug-tab-divider" aria-hidden="true" />}
-              <Button variant="ghost" className="debug-pill" aria-pressed={view === name} onPress={() => openView(name)}>
+              <Smooth radius="capsule"><Button variant="ghost" className="debug-pill" aria-pressed={view === name} data-active={view === name} onPress={() => openView(name)}>
                 {name}
-                {name === '控制台' && errorCount > 0 && <span className="debug-errors"><Icon src={errorIcon} />{errorCount}</span>}
-              </Button>
+                {name === '控制台' && errorCount > 0 && <span className="debug-errors"><ProhibitInsetIcon size={14} aria-hidden="true" />{errorCount}</span>}
+              </Button></Smooth>
             </span>)}
           </div>
         </nav>
         <div className="debug-toolbar-slot" data-end="true">
           <Popover isOpen={dockOpen} onOpenChange={setDockOpen}>
-            <Button isIconOnly variant="ghost" className="debug-icon debug-picker" aria-label="检查器位置"><Icon src={placementInfo[placement].icon} /></Button>
-            <Popover.Content placement="bottom end" className="debug-popover-wrap"><Popover.Dialog aria-label="检查器位置" className="debug-popover">
+            <Smooth radius={6}><Button isIconOnly variant="ghost" className="debug-icon debug-picker" aria-label="检查器位置"><PlacementIcon placement={placement} /></Button></Smooth>
+            <Popover.Content placement="bottom end" className="debug-popover-wrap"><Smooth radius={20} stroke={popoverStroke}><Popover.Dialog aria-label="检查器位置" className="debug-popover">
               <span className="debug-section-title">检查器位置</span>
               {placements.map((option) => <Button key={option} variant="ghost" className="debug-menu-item debug-placement"
                 aria-pressed={placement === option} onPress={() => { setPlacement(option); setDockOpen(false); }}>
-                <Icon src={placementInfo[option].icon} />{placementInfo[option].title}
+                <PlacementIcon placement={option} />{placementLabels[option]}
               </Button>)}
-            </Popover.Dialog></Popover.Content>
+            </Popover.Dialog></Smooth></Popover.Content>
           </Popover>
         </div>
       </div>
-      {view === '元素' && <Inspector key={previewUrl} nodes={snapshot.nodes} selected={selected} select={select} hover={hover} />}
+      {view === '元素' && <Inspector key={previewUrl} nodes={snapshot.nodes} selected={selected} canvasSelection={canvasSelection}
+        onCanvasSelectionRevealed={() => setCanvasSelection(undefined)} select={select} hover={hover} demo={project?.demo} />}
       <Console logs={logs} clearLogs={() => setLogs([])} hidden={view !== '控制台'} />
-      {view === '源代码' && <div className="debug-panel">{source ? <><h2>{source.name}</h2><pre>{source.text}</pre></> : <p>暂无源码。</p>}</div>}
-      {view === '资源' && <div className="debug-panel"><h2>当前画面</h2><dl className="debug-properties">
+      {view === '源代码' && project?.demo && <Smooth radius={7}><div className="debug-panel">
+        <p className="debug-empty">从 Canopus 应用目录启动 DevBox 后，即可浏览该应用的源代码。</p>
+      </div></Smooth>}
+      {project && !project.demo && <Sources title={project.title} scene={scene?.id ?? ''} revision={sourceRevision + generation}
+        hidden={view !== '源代码' || !inspectorOpen} />}
+      {view === '资源' && <Smooth radius={7}><div className="debug-panel"><h2>当前画面</h2><dl className="debug-properties">
         <div><dt>图片对象</dt><dd>{snapshot.nodes.filter((node) => node.kind === 2 && !node.hidden).length}</dd></div>
-      </dl></div>}
-      {view === '性能' && <div className="debug-panel"><h2>浏览器预览</h2><dl className="debug-properties">
+      </dl></div></Smooth>}
+      {view === '性能' && <Smooth radius={7}><div className="debug-panel"><h2>浏览器预览</h2><dl className="debug-properties">
         <div><dt>对象数</dt><dd>{snapshot.nodes.length}</dd></div>
         <div><dt>最近绘制间隔</dt><dd>{snapshot.frameTime ? snapshot.frameTime.toFixed(1) + ' ms' : '—'}</dd></div>
-        <div><dt>WASM 内存</dt><dd>{snapshot.memoryBytes ? (snapshot.memoryBytes / 1048576).toFixed(1) + ' MiB' : '—'}</dd></div>
-      </dl></div>}
-      {view === '图层' && <div className="debug-panel">
+        {!project?.demo && <div><dt>WASM 内存</dt><dd>{snapshot.memoryBytes ? (snapshot.memoryBytes / 1048576).toFixed(1) + ' MiB' : '—'}</dd></div>}
+      </dl></div></Smooth>}
+      {view === '图层' && <Smooth radius={7}><div className="debug-panel">
         {snapshot.nodes.filter((node) => !node.hidden).reverse().map((node) =>
           <Button key={node.id} variant="ghost" className="debug-layer" onHoverStart={() => hover(node.id)} onHoverEnd={() => hover(undefined)}
             onPress={() => { select(node.id); setView('元素'); }}>{nodeName(node)} <span>{node.width} × {node.height}</span></Button>)}
-      </div>}
-    </aside>
+      </div></Smooth>}
+    </aside></Smooth>
     {inspectorOpen && placement !== 'bottom' && <div className="debug-resizer" data-placement={placement} role="separator"
       aria-orientation="vertical" aria-label="调整检查器宽度" onPointerDown={resize} />}
   </main>;

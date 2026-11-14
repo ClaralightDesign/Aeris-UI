@@ -1,18 +1,19 @@
+import { CaretDownIcon } from '@phosphor-icons/react/dist/csr/CaretDown';
+import { MagnifyingGlassIcon } from '@phosphor-icons/react/dist/csr/MagnifyingGlass';
+import { EyeIcon } from '@phosphor-icons/react/dist/csr/Eye';
+import { BracketsAngleIcon } from '@phosphor-icons/react/dist/csr/BracketsAngle';
+import { BugBeetleIcon } from '@phosphor-icons/react/dist/csr/BugBeetle';
+import { AtIcon } from '@phosphor-icons/react/dist/csr/At';
 import { Button, Input } from '@heroui/react';
-import { useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
+import { Smooth } from './smooth';
 import { nodeClass, nodeName, type PreviewNode } from './preview';
-import arrow from './assets/CaretDown2.svg';
-import search from './assets/MagnifyingGlass.svg';
-import eye from './assets/Eye.svg';
-import brackets from './assets/BracketsAngle.svg';
-import bug from './assets/BugBeetle.svg';
-import at from './assets/At.svg';
 
 const tabs = ['样式', '已计算样式', '布局', '事件监听器', '属性', '无障碍'];
 
 function color(value: number) {
   const hex = '#' + value.toString(16).padStart(6, '0');
-  return <><span className="debug-swatch" style={{ backgroundColor: hex }} />{hex}</>;
+  return <><Smooth radius={3} stroke={{ width: 1, color: "var(--debug-divider)", opacity: 1 }}><span className="debug-swatch" style={{ backgroundColor: hex }} /></Smooth>{hex}</>;
 }
 
 function NodeDetails({ node, tab }: { node: PreviewNode; tab: string }) {
@@ -39,14 +40,18 @@ function NodeDetails({ node, tab }: { node: PreviewNode; tab: string }) {
 type TreeProps = {
   nodes: PreviewNode[];
   selected: PreviewNode | undefined;
+  canvasSelection?: number;
+  onCanvasSelectionRevealed: () => void;
   select: (id: number) => void;
   hover: (id?: number) => void;
+  demo?: boolean;
 };
 
-export function Inspector({ nodes, selected, select, hover }: TreeProps) {
+export function Inspector({ nodes, selected, canvasSelection, onCanvasSelectionRevealed, select, hover, demo }: TreeProps) {
   const [query, setQuery] = useState('');
   const [tab, setTab] = useState('样式');
   const [collapsed, setCollapsed] = useState<Set<number>>(() => new Set());
+  const selectedButton = useRef<HTMLButtonElement>(null);
   const byId = new Map(nodes.map((node) => [node.id, node]));
   const parents = new Set(nodes.map((node) => node.parent));
   const selectedPath = new Set<number>();
@@ -63,19 +68,35 @@ export function Inspector({ nodes, selected, select, hover }: TreeProps) {
     nodes.filter((node) => [nodeName(node), nodeClass(node), node.value].join(' ').toLocaleLowerCase().includes(term))
       .forEach((node) => collect(node, matching));
   }
+  const revealFromCanvas = canvasSelection !== undefined && canvasSelection === selected?.id;
+  const clearFilter = revealFromCanvas && Boolean(term) && !matching.has(canvasSelection);
+  const filtering = Boolean(term && !clearFilter);
+
+  useLayoutEffect(() => {
+    const button = selectedButton.current;
+    if (!revealFromCanvas || !button) return;
+    if (clearFilter) setQuery('');
+    if ([...selectedPath].some((id) => id !== selected?.id && collapsed.has(id))) {
+      setCollapsed((previous) => new Set([...previous].filter((id) => id === selected?.id || !selectedPath.has(id))));
+    }
+    button.focus({ preventScroll: true });
+    button.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    onCanvasSelectionRevealed();
+  }, [clearFilter, collapsed, onCanvasSelectionRevealed, revealFromCanvas, selected?.id, selectedPath]);
 
   return <>
     <section className="debug-tree">
-      <div className="debug-search"><img src={search} alt="" /><Input aria-label="搜索对象" placeholder="搜索" value={query} onChange={(event) => setQuery(event.target.value)} /></div>
-      <div className="debug-tree-scroll" onMouseLeave={() => hover()} aria-label="LVGL 对象树">
+      <Smooth radius={7}><div className="debug-search"><MagnifyingGlassIcon size={16} aria-hidden="true" /><Input aria-label="搜索对象" placeholder="搜索" value={query} onChange={(event) => setQuery(event.target.value)} /></div></Smooth>
+      <Smooth radius={7}><div className="debug-tree-scroll" onMouseLeave={() => hover()} aria-label={demo ? '演示对象树' : 'LVGL 对象树'}>
         {nodes.map((node) => {
-          if (term && !matching.has(node.id)) return null;
+          if (filtering && !matching.has(node.id)) return null;
           let depth = 0;
           for (let parent = byId.get(node.parent); parent; parent = byId.get(parent.parent)) {
-            if (!term && collapsed.has(parent.id) && !selectedPath.has(parent.id)) return null;
+            const revealsSelection = selectedPath.has(parent.id) && parent.id !== selected?.id;
+            if (!filtering && collapsed.has(parent.id) && !revealsSelection) return null;
             depth++;
           }
-          const open = term || !collapsed.has(node.id) || (selectedPath.has(node.id) && node.id !== selected?.id);
+          const open = filtering || !collapsed.has(node.id) || (selectedPath.has(node.id) && node.id !== selected?.id);
           return <div key={node.id} className="debug-tree-row" data-selected={selected?.id === node.id} data-hidden={node.hidden}
             style={{ paddingInlineStart: 12 + depth * 14 }} onMouseEnter={() => hover(node.id)}>
             {parents.has(node.id) ? <Button isIconOnly variant="ghost" className="debug-twisty"
@@ -87,26 +108,27 @@ export function Inspector({ nodes, selected, select, hover }: TreeProps) {
                   if (open) next.add(node.id); else next.delete(node.id);
                   return next;
                 });
-              }}><img src={arrow} alt="" data-closed={!open} /></Button> : <span className="debug-twisty-spacer" />}
-            <Button variant="ghost" className="debug-node-label" onPress={() => select(node.id)}>{nodeName(node)}</Button>
+              }}><CaretDownIcon size={11} aria-hidden="true" data-closed={!open} /></Button> : <span className="debug-twisty-spacer" />}
+            <Button ref={selected?.id === node.id ? selectedButton : undefined} variant="ghost" className="debug-node-label"
+              onPress={() => select(node.id)}>{nodeName(node)}</Button>
           </div>;
         })}
         {!nodes.length && <p className="debug-empty">等待预览加载</p>}
-        {term && nodes.length > 0 && !matching.size && <p className="debug-empty">未找到对象</p>}
-      </div>
+        {filtering && nodes.length > 0 && !matching.size && <p className="debug-empty">未找到对象</p>}
+      </div></Smooth>
     </section>
     <section className="debug-details">
       <div className="debug-detail-tabs" aria-label="对象详情">
-        {tabs.map((name) => <Button key={name} variant="ghost" className="debug-pill" aria-pressed={tab === name} onPress={() => setTab(name)}>{name}</Button>)}
+        {tabs.map((name) => <Smooth key={name} radius="capsule"><Button variant="ghost" className="debug-pill" aria-pressed={tab === name} onPress={() => setTab(name)}>{name}</Button></Smooth>)}
       </div>
       {selected && <>
-        <div className="debug-detail-header">
-          <img src={eye} alt="" /> <span>{nodeName(selected)}</span>
-          <Button isIconOnly variant="ghost" className="debug-icon" aria-label="查看布局" onPress={() => setTab('布局')}><img src={bug} alt="" /></Button>
-          <Button isIconOnly variant="ghost" className="debug-icon" aria-label="查看属性" onPress={() => setTab('属性')}><img src={brackets} alt="" /></Button>
-        </div>
-        <div className="debug-detail-body"><NodeDetails node={selected} tab={tab} /></div>
-        <div className="debug-detail-footer"><span>渲染引擎</span><span><img src={at} alt="" /> LVGL 9.4</span></div>
+        <Smooth radius={7}><div className="debug-detail-header">
+          <EyeIcon size={16} aria-hidden="true" /> <span>{nodeName(selected)}</span>
+          <Smooth radius={6}><Button isIconOnly variant="ghost" className="debug-icon" aria-label="查看布局" onPress={() => setTab('布局')}><BugBeetleIcon size={16} aria-hidden="true" /></Button></Smooth>
+          <Smooth radius={6}><Button isIconOnly variant="ghost" className="debug-icon" aria-label="查看属性" onPress={() => setTab('属性')}><BracketsAngleIcon className="debug-detail-attributes-icon" size={16} aria-hidden="true" /></Button></Smooth>
+        </div></Smooth>
+        <Smooth radius={7}><div className="debug-detail-body"><NodeDetails node={selected} tab={tab} /></div></Smooth>
+        <Smooth radius={7}><div className="debug-detail-footer"><span>渲染引擎</span><span><AtIcon size={15} aria-hidden="true" /> {demo ? 'Canvas 2D' : 'LVGL 9.4'}</span></div></Smooth>
       </>}
     </section>
   </>;

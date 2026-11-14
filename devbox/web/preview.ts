@@ -1,3 +1,5 @@
+export type BoxEdges = [top: number, right: number, bottom: number, left: number];
+
 export type PreviewNode = {
   id: number;
   parent: number;
@@ -13,6 +15,8 @@ export type PreviewNode = {
   contentY: number;
   contentWidth: number;
   contentHeight: number;
+  margin?: BoxEdges;
+  borderWidths?: BoxEdges;
   hidden: boolean;
   clickable: boolean;
   scrollable: boolean;

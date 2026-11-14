@@ -3,13 +3,24 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "demo": "node cli.mjs --demo",
     "check": "tsc --noEmit && vite build"
   },
   "dependencies": {
     "@heroui/react": "^3.2.7",
     "@heroui/styles": "^3.2.7",
+    "@jsquash/webp": "1.5.0",
+    "@lisse/react": "^0.7.3",
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "@phosphor-icons/react": "2.1.10",
+    "@scritto/react": "^0.1.0",
+    "highlight.js": "11.12.0",
+    "playwright": "1.65.0",
     "react": "^19.3.1",
-    "react-dom": "^19.3.1"
+    "react-dom": "^19.3.1",
+    "sharp": "0.35.5",
+    "smol-toml": "1.9.1",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.5",
