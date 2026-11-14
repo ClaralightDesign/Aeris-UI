@@ -1,0 +1,6 @@
+#!/bin/sh
+# 从调用方项目启动独立的 DevBox。
+set -eu
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+pnpm --dir "$ROOT" install --frozen-lockfile >&2
+exec node "$ROOT/cli.mjs" "$@"

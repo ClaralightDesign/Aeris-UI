@@ -1,2 +1,5 @@
 /target/
 .DS_Store
+/devbox/node_modules/
+/devbox/dist/
+/devbox/.vite/

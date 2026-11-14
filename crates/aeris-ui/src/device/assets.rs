@@ -28,6 +28,7 @@ pub const ICON_PAUSE: &[u8] = asset_path!("header-icon-pause.bin");
 pub const CARD_FACE: &[u8] = asset_path!("card-face.bin");
 pub const CHECKBOX_MINUS: &[u8] = asset_path!("checkbox-minus.bin");
 pub const CHECKBOX_CHECK: &[u8] = asset_path!("checkbox-check.bin");
+pub(super) const CONFIRMATION_SUCCESS: &[u8] = asset_path!("confirmation-success.bin");
 pub const SLIDER_MINUS: &[u8] = asset_path!("slider-minus.bin");
 pub const SLIDER_PLUS: &[u8] = asset_path!("slider-plus.bin");
 
@@ -111,6 +112,7 @@ macro_rules! asset {
 }
 
 pub const ALL: &[(&str, &[u8])] = &[
+    asset!("confirmation-success.bin", "confirmation-success.bin"),
     asset!("footer-background.bin", "footer-background.bin"),
     asset!("timer-ring-card-0.bin", "timer-ring-card-0.bin"),
     asset!("timer-ring-card-1.bin", "timer-ring-card-1.bin"),
@@ -294,6 +296,30 @@ pub fn ensure_fonts() {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn fonts_ready() -> bool {
     FONTS_READY.load(core::sync::atomic::Ordering::Relaxed)
+}
+
+#[cfg(target_os = "emscripten")]
+pub fn ensure_files(entries: &[(&str, &[u8])]) -> bool {
+    let mut scratch = [0; super::packed_assets::BLOCK_SIZE];
+    entries.iter().all(|&(name, data)| unsafe {
+        crate::devbox::assets::register(name, data, &mut scratch)
+    })
+}
+
+#[cfg(target_os = "emscripten")]
+pub fn ensure() -> bool {
+    ensure_files(ALL)
+}
+
+#[cfg(target_os = "emscripten")]
+pub fn ensure_fonts() {
+    crate::devbox::assets::load_fonts();
+    let _ = ensure_files(super::font_assets::ALL);
+}
+
+#[cfg(target_os = "emscripten")]
+pub fn fonts_ready() -> bool {
+    true
 }
 
 #[cfg(test)]

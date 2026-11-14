@@ -7,8 +7,11 @@ use crate::{
 use canopus_target_private::*;
 
 use super::anim::now_ms;
-use super::backdrop;
 use super::lv::{self, Font, Obj};
+use super::{
+    backdrop,
+    confirmation_overlay::{FirstStageTap, Motion, DETAIL_DURATION_MS},
+};
 
 const BUTTON_WIDTH: i32 = 330;
 const BUTTON_GAP: i32 = 6;
@@ -32,6 +35,8 @@ enum Phase {
     Capturing,
     Opening,
     Open,
+    Expanding,
+    Detail,
     Closing,
 }
 
@@ -39,16 +44,22 @@ enum Phase {
 struct Frame {
     backdrop: u32,
     content: u32,
+    icon: u32,
+    detail: u32,
 }
 
 impl Frame {
     const HIDDEN: Self = Self {
         backdrop: 0,
         content: 0,
+        icon: 0,
+        detail: 0,
     };
     const OPEN: Self = Self {
         backdrop: 255,
         content: 255,
+        icon: 255,
+        detail: 0,
     };
 
     fn content_offset(self, fade_only: bool) -> u32 {
@@ -65,6 +76,7 @@ struct Dialog {
     backdrop: Obj,
     has_blur: bool,
     fade_only: bool,
+    confirmation: Option<Motion>,
     content: Obj,
     timer: Obj,
     started_at: u32,
@@ -78,6 +90,7 @@ const EMPTY: Dialog = Dialog {
     backdrop: core::ptr::null_mut(),
     has_blur: false,
     fade_only: false,
+    confirmation: None,
     content: core::ptr::null_mut(),
     timer: core::ptr::null_mut(),
     started_at: 0,
@@ -267,14 +280,27 @@ pub extern "C" fn show(event: Obj) {
 }
 
 pub fn open(root: Obj, layers: Layers) {
-    open_with_transition(root, layers, false);
+    let _ = open_with_transition(root, layers, false, None);
 }
 
 pub fn open_fade(root: Obj, layers: Layers) {
-    open_with_transition(root, layers, true);
+    let _ = open_with_transition(root, layers, true, None);
 }
 
-fn open_with_transition(root: Obj, layers: Layers, fade_only: bool) {
+pub(super) fn busy() -> bool {
+    unsafe { DIALOG.phase != Phase::Hidden }
+}
+
+pub(super) fn open_confirmation(root: Obj, layers: Layers, motion: Motion) -> bool {
+    open_with_transition(root, layers, false, Some(motion))
+}
+
+fn open_with_transition(
+    root: Obj,
+    layers: Layers,
+    fade_only: bool,
+    confirmation: Option<Motion>,
+) -> bool {
     let Layers {
         surface,
         backdrop: image,
@@ -283,7 +309,10 @@ fn open_with_transition(root: Obj, layers: Layers, fade_only: bool) {
     {
         let state = unsafe { &mut *core::ptr::addr_of_mut!(DIALOG) };
         if root.is_null() || state.phase != Phase::Hidden {
-            return;
+            if confirmation.is_some() {
+                unsafe { lvx_object_delete(surface) };
+            }
+            return false;
         }
         *state = Dialog {
             surface,
@@ -291,6 +320,7 @@ fn open_with_transition(root: Obj, layers: Layers, fade_only: bool) {
             content,
             phase: Phase::Capturing,
             fade_only,
+            confirmation,
             ..EMPTY
         };
     }
@@ -301,7 +331,7 @@ fn open_with_transition(root: Obj, layers: Layers, fade_only: bool) {
     };
     let state = unsafe { &mut *core::ptr::addr_of_mut!(DIALOG) };
     if state.surface != surface || state.phase != Phase::Capturing {
-        return;
+        return false;
     }
     state.has_blur = !source.is_null();
     if state.has_blur {
@@ -321,6 +351,7 @@ fn open_with_transition(root: Obj, layers: Layers, fade_only: bool) {
         lvx_set_hidden(state.surface, 0);
     }
     start(state, Phase::Opening);
+    state.surface == surface
 }
 
 pub extern "C" fn dismiss(_event: Obj) {
@@ -338,9 +369,64 @@ pub fn close(layers: Layers) -> bool {
     if state.surface != layers.surface || !matches!(state.phase, Phase::Opening | Phase::Open) {
         return false;
     }
+    begin_close(state);
+    true
+}
+
+pub(super) fn dismiss_confirmation(root: Obj) -> bool {
+    let state = unsafe { &mut *core::ptr::addr_of_mut!(DIALOG) };
+    if !state.confirmation.is_some_and(|motion| motion.root == root)
+        || !matches!(
+            state.phase,
+            Phase::Opening | Phase::Open | Phase::Expanding | Phase::Detail
+        )
+    {
+        return false;
+    }
+    begin_close(state);
+    true
+}
+
+pub(super) fn tap_confirmation(root: Obj) {
+    let state = unsafe { &mut *core::ptr::addr_of_mut!(DIALOG) };
+    if let Some(motion) = &mut state.confirmation {
+        if motion.root == root
+            && motion.has_detail()
+            && matches!(motion.first_stage_tap, FirstStageTap::ShowDetails)
+        {
+            match state.phase {
+                Phase::Opening => {
+                    motion.first_stage_ms = 0;
+                    return;
+                }
+                Phase::Open => {
+                    start(state, Phase::Expanding);
+                    return;
+                }
+                _ => {}
+            }
+        }
+    }
+    dismiss_confirmation(root);
+}
+
+pub(super) fn hide_confirmation(root: Obj) {
+    let state = unsafe { &mut *core::ptr::addr_of_mut!(DIALOG) };
+    if state.confirmation.is_some_and(|motion| motion.root == root) {
+        remove_confirmation(state);
+    }
+}
+
+pub(super) fn confirmation_deleted(surface: Obj) {
+    let state = core::ptr::addr_of_mut!(DIALOG);
+    if unsafe { (*state).surface == surface && (*state).confirmation.is_some() } {
+        reset(unsafe { &mut *state });
+    }
+}
+
+fn begin_close(state: &mut Dialog) {
     state.closing_from = state.frame.unwrap_or(Frame::HIDDEN);
     start(state, Phase::Closing);
-    true
 }
 
 pub fn dismiss_active(layers: Layers) -> bool {
@@ -381,7 +467,17 @@ pub fn confirming() -> bool {
 pub fn stop() {
     unsafe { LIMIT = None };
     let state = unsafe { &mut *core::ptr::addr_of_mut!(DIALOG) };
+    if state.confirmation.is_some() {
+        remove_confirmation(state);
+    } else {
+        reset(state);
+    }
+}
+
+fn remove_confirmation(state: &mut Dialog) {
+    let surface = state.surface;
     reset(state);
+    unsafe { lvx_object_delete(surface) };
 }
 
 fn reset(state: &mut Dialog) {
@@ -396,7 +492,11 @@ fn start(state: &mut Dialog, phase: Phase) {
     if state.timer.is_null() {
         state.timer = unsafe { lvx_timer_create(tick, FRAME_MS, core::ptr::null_mut()) };
     }
-    if state.timer.is_null() {
+    if state.timer.is_null()
+        || state
+            .confirmation
+            .is_some_and(|motion| motion.reduced_motion)
+    {
         finish(state);
     }
 }
@@ -411,6 +511,11 @@ fn cancel_timer(state: &mut Dialog) {
 extern "C" fn tick(_timer: Obj) {
     let state = unsafe { &mut *core::ptr::addr_of_mut!(DIALOG) };
     let elapsed = now_ms().wrapping_sub(state.started_at);
+    let animation_time = if state.confirmation.is_some() {
+        elapsed - elapsed / 4
+    } else {
+        elapsed
+    };
     let (frame, duration) = match state.phase {
         Phase::Opening if state.fade_only => {
             let opacity = ease_out(elapsed, BACKDROP_MS);
@@ -418,31 +523,70 @@ extern "C" fn tick(_timer: Obj) {
                 Frame {
                     backdrop: opacity,
                     content: opacity,
+                    icon: 255,
+                    detail: 0,
                 },
                 BACKDROP_MS,
             )
         }
         Phase::Opening => (
             Frame {
-                backdrop: ease_out(elapsed, BACKDROP_MS),
-                content: ease_out(elapsed.saturating_sub(CONTENT_DELAY_MS), CONTENT_MS),
+                backdrop: ease_out(animation_time, BACKDROP_MS),
+                content: ease_out(animation_time.saturating_sub(CONTENT_DELAY_MS), CONTENT_MS),
+                icon: state
+                    .confirmation
+                    .map_or(255, |_| Motion::icon_progress(animation_time)),
+                detail: 0,
             },
-            CONTENT_DELAY_MS + CONTENT_MS,
+            state
+                .confirmation
+                .map_or(CONTENT_DELAY_MS + CONTENT_MS, |_| {
+                    (CONTENT_DELAY_MS + CONTENT_MS).max(Motion::ICON_END_MS)
+                }),
         ),
         Phase::Closing => (
             Frame {
                 backdrop: fade_out(
                     state.closing_from.backdrop,
-                    elapsed.saturating_sub(CLOSE_BACKDROP_DELAY_MS),
+                    animation_time.saturating_sub(CLOSE_BACKDROP_DELAY_MS),
                     CLOSE_BACKDROP_MS,
                 ),
-                content: fade_out(state.closing_from.content, elapsed, CLOSE_CONTENT_MS),
+                content: fade_out(state.closing_from.content, animation_time, CLOSE_CONTENT_MS),
+                icon: state.closing_from.icon,
+                detail: state.closing_from.detail,
             },
             CLOSE_BACKDROP_DELAY_MS + CLOSE_BACKDROP_MS,
         ),
+        Phase::Open | Phase::Detail => {
+            let Some(motion) = state.confirmation else {
+                return;
+            };
+            if state.phase == Phase::Open && motion.has_detail() {
+                if elapsed >= motion.first_stage_ms {
+                    start(state, Phase::Expanding);
+                }
+            } else if motion.timeout_ms.is_some_and(|timeout| elapsed >= timeout) {
+                begin_close(state);
+            }
+            return;
+        }
+        Phase::Expanding => {
+            if animation_time >= DETAIL_DURATION_MS {
+                finish(state);
+            } else {
+                render(
+                    state,
+                    Frame {
+                        detail: ease_out(animation_time, DETAIL_DURATION_MS),
+                        ..Frame::OPEN
+                    },
+                );
+            }
+            return;
+        }
         _ => return,
     };
-    if elapsed >= duration {
+    if animation_time >= duration {
         finish(state);
     } else {
         render(state, frame);
@@ -450,13 +594,44 @@ extern "C" fn tick(_timer: Obj) {
 }
 
 fn finish(state: &mut Dialog) {
-    cancel_timer(state);
-    if state.phase == Phase::Opening {
-        render(state, Frame::OPEN);
-        state.phase = Phase::Open;
-    } else {
-        unsafe { lvx_set_hidden(state.surface, 1) };
-        reset(state);
+    match state.phase {
+        Phase::Opening => {
+            render(state, Frame::OPEN);
+            state.phase = Phase::Open;
+            state.started_at = now_ms();
+            if state
+                .confirmation
+                .is_some_and(|motion| motion.has_detail() || motion.timeout_ms.is_some())
+            {
+                if state.timer.is_null() {
+                    remove_confirmation(state);
+                }
+            } else {
+                cancel_timer(state);
+            }
+        }
+        Phase::Expanding => {
+            render(
+                state,
+                Frame {
+                    detail: 255,
+                    ..Frame::OPEN
+                },
+            );
+            state.phase = Phase::Detail;
+            state.started_at = now_ms();
+            if state
+                .confirmation
+                .is_some_and(|motion| motion.timeout_ms.is_none())
+            {
+                cancel_timer(state);
+            }
+        }
+        _ if state.confirmation.is_some() => remove_confirmation(state),
+        _ => {
+            unsafe { lvx_set_hidden(state.surface, 1) };
+            reset(state);
+        }
     }
 }
 
@@ -477,6 +652,17 @@ fn render(state: &mut Dialog, frame: Frame) {
     {
         lv::style(state.content, lv::OPA, frame.content);
     }
+    if let Some(motion) = state.confirmation {
+        if state.frame.is_none_or(|previous| {
+            previous.content != frame.content
+                || previous.icon != frame.icon
+                || previous.detail != frame.detail
+        }) {
+            motion.paint(frame.content, frame.icon, frame.detail);
+        }
+        state.frame = Some(frame);
+        return;
+    }
     let offset = frame.content_offset(state.fade_only);
     if state
         .frame
@@ -493,7 +679,7 @@ fn fade_out(from: u32, elapsed: u32, duration: u32) -> u32 {
 }
 
 // 三次减速曲线，输出可直接用于 LVGL 透明度。
-fn ease_out(elapsed: u32, duration: u32) -> u32 {
+pub(super) fn ease_out(elapsed: u32, duration: u32) -> u32 {
     let remaining = 255 * duration.saturating_sub(elapsed) / duration;
     255 - remaining * remaining * remaining / (255 * 255)
 }

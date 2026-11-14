@@ -1,19 +1,25 @@
 //! 小米手环 10 Pro 3.101.043 的原生界面组件。
 
+#[cfg(not(target_arch = "wasm32"))]
 use canopus_abi::CanopusContext;
+#[cfg(not(target_arch = "wasm32"))]
 use core::ffi::CStr;
+#[cfg(not(target_arch = "wasm32"))]
 use core::sync::atomic::{AtomicPtr, Ordering};
 
+#[cfg(not(target_arch = "wasm32"))]
 static CONTEXT: AtomicPtr<CanopusContext> = AtomicPtr::new(core::ptr::null_mut());
 
 /// 设置当前模块的资源上下文。
 ///
 /// # 安全要求
 /// 上下文须在模块使用界面资源期间保持有效。
+#[cfg(not(target_arch = "wasm32"))]
 pub unsafe fn set_context(context: *const CanopusContext) {
     CONTEXT.store(context.cast_mut(), Ordering::Release);
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn context() -> *const CanopusContext {
     CONTEXT.load(Ordering::Acquire)
 }
@@ -24,6 +30,7 @@ macro_rules! asset_path {
     };
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn image_path<'a>(name: &'a [u8], output: &'a mut [u8]) -> Option<&'a [u8]> {
     CStr::from_bytes_with_nul(name).ok()?;
     if name.starts_with(b"/") {
@@ -37,6 +44,7 @@ fn image_path<'a>(name: &'a [u8], output: &'a mut [u8]) -> Option<&'a [u8]> {
     write_image_path(module_id, name, output)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn write_image_path<'a>(module_id: &[u8], name: &[u8], output: &'a mut [u8]) -> Option<&'a [u8]> {
     const ROOT: &[u8] = b"/data/canopus/m.";
     if module_id.is_empty() {
@@ -53,24 +61,32 @@ fn write_image_path<'a>(module_id: &[u8], name: &[u8], output: &'a mut [u8]) -> 
 
 pub mod anim;
 pub mod assets;
+#[cfg(not(target_arch = "wasm32"))]
+mod backdrop;
+#[cfg(target_os = "emscripten")]
+#[path = "../devbox/backdrop.rs"]
 mod backdrop;
 pub mod card_menu;
 pub mod cards;
 pub mod checkbox;
 pub mod choice_list;
 pub mod confirm_slider;
+pub mod confirmation_overlay;
 pub mod countdown_card;
 pub mod dialog;
 pub mod font;
 mod font_assets;
 pub mod header;
 pub mod keyboard;
-#[cfg(feature = "gallery")]
+#[cfg(all(feature = "gallery", not(target_arch = "wasm32")))]
+mod linoval;
+#[cfg(target_os = "emscripten")]
+#[path = "../devbox/linoval.rs"]
 mod linoval;
 pub mod lv;
 pub mod numeric_wheel;
 pub mod option_grid;
-mod packed_assets;
+pub(crate) mod packed_assets;
 pub mod page;
 pub mod page_indicator;
 pub mod progress_bar;

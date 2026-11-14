@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/aeris-ui", "crates/rolling-digits"]
+members = ["crates/aeris-ui", "crates/cargo-aeris-devbox", "crates/rolling-digits"]
 
 [workspace.package]
 version = "0.1.0"

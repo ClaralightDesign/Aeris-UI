@@ -18,6 +18,10 @@ canopus-abi = { git = "https://github.com/AstralSightStudios/Canopus.git", rev =
 
 组件清单见 [aeris-ui](crates/aeris-ui/README.md)。比例数字滚动模型见 [rolling-digits](crates/rolling-digits/README.md)。
 
+## DevBox
+
+安装 DevBox 后，在应用目录运行 `cargo aeris-devbox`，支持直接使用 Cargo 拉取的 Git 依赖。项目通过 `devbox.json` 和 Rust 启动入口运行完整应用，再检查当前页面的 UI。[接入与启动](devbox/README.md)
+
 ## 验证
 
 ```sh

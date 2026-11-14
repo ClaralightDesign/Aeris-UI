@@ -5,14 +5,22 @@
 pub mod assets;
 pub mod capsule;
 pub mod card;
-#[cfg(any(test, feature = "band-10-pro"))]
+#[cfg(any(
+    test,
+    feature = "band-10-pro",
+    all(feature = "devbox", target_os = "emscripten")
+))]
 mod confirm_slider;
 pub mod font;
 pub mod geometry;
 pub mod header;
 pub mod motion;
 pub mod nine_slice;
-#[cfg(any(test, feature = "band-10-pro"))]
+#[cfg(any(
+    test,
+    feature = "band-10-pro",
+    all(feature = "devbox", target_os = "emscripten")
+))]
 mod numeric_wheel;
 pub mod page_indicator;
 pub mod progress_ring;
@@ -30,5 +38,16 @@ pub use page_indicator::{
 };
 pub use theme::Theme;
 
-#[cfg(feature = "band-10-pro")]
+#[cfg(any(
+    all(feature = "band-10-pro", not(target_arch = "wasm32")),
+    all(feature = "devbox", target_os = "emscripten")
+))]
 pub mod device;
+
+#[cfg(all(feature = "devbox", target_os = "emscripten"))]
+pub mod devbox;
+
+#[cfg(all(feature = "devbox", target_os = "emscripten"))]
+extern crate self as canopus_target_private;
+#[cfg(all(feature = "devbox", target_os = "emscripten"))]
+pub use devbox::bindings::*;

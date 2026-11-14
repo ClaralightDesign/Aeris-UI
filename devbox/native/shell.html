@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#1972F8" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#1C4D98" media="(prefers-color-scheme: dark)">
+  <meta name="color-scheme" content="light dark">
+  <link rel="icon" href="data:,">
+  <title>Aeris DevBox</title>
+  <style>
+    body { margin: 0; min-height: 100svh; display: grid; place-items: center; background: Canvas; color: CanvasText; }
+    #viewport { width: min(336px, 100vw, 70svh); aspect-ratio: 336 / var(--crop-height, 480); overflow: hidden; }
+    #viewport[hidden] { display: none; }
+    canvas { display: block; width: 100%; height: auto; touch-action: none; }
+    html.embedded, html.embedded body { overflow: hidden; }
+    html.embedded body { display: block; min-height: 0; background: #000; color: #fff; }
+    html.embedded #viewport { width: 100%; }
+    p { font: menu; }
+  </style>
+</head>
+<body>
+  <div id="viewport">
+    <canvas id="gallery" width="336" height="480" aria-label="Aeris UI 组件预览"></canvas>
+  </div>
+  <p id="error" role="alert" hidden>无法加载组件预览。</p>
+  <script>
+    if (window.parent !== window) {
+      document.documentElement.classList.add("embedded");
+    }
+    const viewport = document.getElementById("viewport");
+    const canvas = document.getElementById("gallery");
+    const context = canvas.getContext("2d", { alpha: false });
+    let cropHeight = canvas.height;
+    let frame;
+    let pointer = null;
+    let lastPaint;
+    let frameTime = 0;
+    let memoryBytes = 0;
+    const debug = new URLSearchParams(location.search).has("debug") && window.parent !== window;
+    function notify(type, data = {}) {
+      if (debug) window.parent.postMessage({ type, ...data }, location.origin);
+    }
+    const point = (event) => {
+      const bounds = canvas.getBoundingClientRect();
+      return [
+        Math.min(canvas.width - 1, Math.max(0, Math.round((event.clientX - bounds.left) * canvas.width / bounds.width))),
+        Math.min(cropHeight - 1, Math.max(0, Math.round((event.clientY - bounds.top) * canvas.height / bounds.height))),
+      ];
+    };
+    var Module = {
+      galleryCrop(height) {
+        if (!Number.isInteger(height) || height < 1 || height > canvas.height) return;
+        cropHeight = height;
+        viewport.style.setProperty("--crop-height", String(height));
+        viewport.dataset.cropHeight = String(height);
+        if (window.parent !== window && location.origin !== "null") {
+          window.parent.postMessage({ type: "aeris-preview-size", height }, location.origin);
+        }
+      },
+      galleryPaint(memory, start, width, height) {
+        if (width !== canvas.width || height !== canvas.height) return;
+        frame ??= context.createImageData(width, height);
+        for (let i = 0; i < frame.data.length; i += 4) {
+          frame.data[i] = memory[start + i + 2];
+          frame.data[i + 1] = memory[start + i + 1];
+          frame.data[i + 2] = memory[start + i];
+          frame.data[i + 3] = 255;
+        }
+        context.putImageData(frame, 0, 0);
+        if (debug) {
+          const now = performance.now();
+          if (lastPaint !== undefined) frameTime = now - lastPaint;
+          lastPaint = now;
+          memoryBytes = memory.byteLength;
+        }
+        if (!canvas.dataset.ready) canvas.dataset.ready = "true";
+      },
+      galleryLog(level, text) {
+        notify("aeris-debug-log", { level, text: String(text) });
+      },
+      print(text) { console.log(text); Module.galleryLog("info", text); },
+      printErr(text) { console.error(text); Module.galleryLog("error", text); },
+      galleryError() {
+        notify("aeris-debug-error");
+        viewport.hidden = true;
+        document.getElementById("error").hidden = false;
+      },
+      onRuntimeInitialized() {
+        window.addEventListener("keydown", (event) => {
+          if (event.key === "Escape" && !event.defaultPrevented) Module._devbox_back();
+        });
+        if (debug) {
+          window.aerisDebugger = {
+            snapshot() {
+              if (!canvas.dataset.ready) return null;
+              Module.galleryNodes = [];
+              Module._gallery_inspect();
+              return {
+                nodes: Module.galleryNodes,
+                height: cropHeight,
+                frameTime,
+                memoryBytes,
+              };
+            },
+            screenshot() {
+              if (!canvas.dataset.ready) return null;
+              const output = document.createElement("canvas");
+              output.width = canvas.width;
+              output.height = cropHeight;
+              output.getContext("2d").drawImage(canvas, 0, 0, canvas.width, cropHeight, 0, 0, canvas.width, cropHeight);
+              return output.toDataURL("image/png");
+            },
+          };
+        }
+        canvas.addEventListener("pointerdown", (event) => {
+          if (pointer !== null || event.button !== 0) return;
+          pointer = event.pointerId;
+          canvas.setPointerCapture(pointer);
+          Module._gallery_pointer(...point(event), 0);
+        });
+        canvas.addEventListener("pointermove", (event) => {
+          if (pointer === event.pointerId) Module._gallery_pointer(...point(event), 1);
+        });
+        for (const [name, phase] of [["pointerup", 2], ["pointercancel", 3], ["lostpointercapture", 3]]) {
+          canvas.addEventListener(name, (event) => {
+            if (pointer !== event.pointerId) return;
+            pointer = null;
+            Module._gallery_pointer(...point(event), phase);
+          });
+        }
+      },
+      onAbort(reason) { Module.galleryLog("error", reason); Module.galleryError(); },
+    };
+  </script>
+  {{{ SCRIPT }}}
+</body>
+</html>

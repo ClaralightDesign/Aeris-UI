@@ -12,6 +12,8 @@ use super::{anim, assets};
 
 pub type Obj = *mut c_void;
 
+pub(super) const EVENT_DELETE: u32 = 36;
+
 const ALIGN_TOP_LEFT: u32 = 1;
 const CARD_WIDTH: i32 = 328;
 pub(super) const CARD_HEIGHT: i32 = 98;
@@ -30,6 +32,7 @@ const IMAGE_RECOLOR: u32 = 69;
 const IMAGE_RECOLOR_OPA: u32 = 70;
 const TEXT_COLOR: u32 = 88;
 pub(super) const TEXT_OPA: u32 = 89;
+pub(super) const TEXT_LINE_SPACE: u32 = 92;
 pub const OPA: u32 = 95;
 pub const TRANSLATE_X: u32 = 106;
 pub const TRANSLATE_Y: u32 = 107;
@@ -40,7 +43,7 @@ pub enum Font {
     Medium24,
     Medium28,
     Demibold32,
-    #[cfg(feature = "gallery")]
+    #[cfg(any(feature = "gallery", target_os = "emscripten"))]
     Rounded44,
 }
 
@@ -49,7 +52,7 @@ impl Font {
     pub const fn base_px(self) -> i32 {
         match self {
             Font::Demibold32 => 32,
-            #[cfg(feature = "gallery")]
+            #[cfg(any(feature = "gallery", target_os = "emscripten"))]
             Font::Rounded44 => 44,
             Font::Medium28 => 28,
             Font::Small24 | Font::Medium24 => 24,
@@ -67,7 +70,7 @@ pub fn text_px(object: Obj, width: i32, height: i32, align: u32, font: Font, px:
     if object.is_null() || px == font.base_px() {
         return;
     }
-    #[cfg(feature = "gallery")]
+    #[cfg(any(feature = "gallery", target_os = "emscripten"))]
     {
         let _ = align;
         let line_height = super::linoval::apply(object, font, px);
@@ -75,7 +78,7 @@ pub fn text_px(object: Obj, width: i32, height: i32, align: u32, font: Font, px:
             unsafe { lvx_object_set_size(object, width, line_height) };
         }
     }
-    #[cfg(not(feature = "gallery"))]
+    #[cfg(not(any(feature = "gallery", target_os = "emscripten")))]
     {
         let scale = (px * 256) / font.base_px();
         // 文字以对齐点为缩放原点。
@@ -159,20 +162,20 @@ pub unsafe fn label(
         return object;
     }
     unsafe {
-        #[cfg(not(feature = "gallery"))]
+        #[cfg(not(any(feature = "gallery", target_os = "emscripten")))]
         lvx_label_set_text(object, text.as_ptr());
         lvx_object_set_size(object, width, height);
         lvx_object_align(object, ALIGN_TOP_LEFT, x, y);
         lvx_label_set_text_align_center(object);
         lvx_object_clear_flag(object, CLICKABLE);
-        #[cfg(feature = "gallery")]
+        #[cfg(any(feature = "gallery", target_os = "emscripten"))]
         {
             let line_height = super::linoval::apply(object, font, font.base_px());
             if height < line_height {
                 lvx_object_set_size(object, width, line_height);
             }
         }
-        #[cfg(not(feature = "gallery"))]
+        #[cfg(not(any(feature = "gallery", target_os = "emscripten")))]
         {
             let style_ptr = match font {
                 Font::Small24 => canopus_target_private::STYLE_MISANS_REGULAR_24,
@@ -182,7 +185,7 @@ pub unsafe fn label(
             };
             lvx_style_apply(object, style_ptr as *const c_void, 255, 0);
         }
-        #[cfg(feature = "gallery")]
+        #[cfg(any(feature = "gallery", target_os = "emscripten"))]
         lvx_label_set_text(object, text.as_ptr());
     }
     style(object, BG_OPA, 0);

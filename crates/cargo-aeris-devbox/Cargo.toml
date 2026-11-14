@@ -1,0 +1,10 @@
+[package]
+name = "cargo-aeris-devbox"
+description = "Launch Aeris DevBox from an application project"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+serde_json = "1"
