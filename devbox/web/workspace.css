@@ -145,6 +145,28 @@ button[data-slot="smooth-corners"]:focus-visible { outline: 2px solid #69b6ff; o
 }
 .debug-toolbar .debug-icon[aria-pressed=true] { background: #ffffff36; }
 .debug-toolbar .debug-icon:hover, .debug-toolbar .debug-target:hover { background: #ffffff20; }
+.debug-toolbar .debug-zoom-trigger {
+  display: flex;
+  justify-content: flex-start;
+  gap: 0;
+  overflow: hidden;
+  font: 500 13px/16px 'Linoval Sans', 'MiSans', sans-serif;
+  font-variant-numeric: tabular-nums;
+  transition: width .32s cubic-bezier(.22, 1, .36, 1), background-color .2s ease;
+}
+.debug-toolbar .debug-zoom-trigger[data-expanded=true] {
+  width: calc(52px + var(--debug-zoom-digits) * 1ch);
+  background: rgb(255 255 255 / 16%);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+}
+.debug-zoom-trigger-value {
+  margin-inline-start: 5px;
+  opacity: 0;
+  white-space: nowrap;
+  transition: opacity .16s ease;
+}
+.debug-zoom-trigger[data-expanded=true] .debug-zoom-trigger-value { opacity: 1; }
 .debug-stage { position: relative; flex: 1; min-height: 0; overflow: hidden; display: grid; padding: 12px; }
 .debug-stage[data-ready=true] { touch-action: none; cursor: grab; }
 .debug-stage[data-pan=ready] .debug-device-canvas,
@@ -418,7 +440,7 @@ button[data-slot="smooth-corners"]:focus-visible { outline: 2px solid #69b6ff; o
   height: 28px;
   padding: 0 4px 0 8px;
   color: #ff6d6d;
-  font-size: 14px;
+  font-size: 13px;
   line-height: 16px;
   white-space: nowrap;
 }
@@ -448,6 +470,25 @@ button[data-slot="smooth-corners"]:focus-visible { outline: 2px solid #69b6ff; o
 }
 .debug-update-action:hover { background: rgba(255, 255, 255, .24); }
 .debug-update-action:focus-visible { outline: 2px solid #69b6ff; outline-offset: 2px; }
+.debug-update-action-label {
+  position: relative;
+  flex: none;
+  height: 1lh;
+  white-space: nowrap;
+  transition: width .22s cubic-bezier(.22, 1, .36, 1);
+}
+.debug-update-action-label > span {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-start: 0;
+  opacity: 0;
+  filter: blur(4px);
+  transition: opacity .18s ease, filter .22s ease;
+}
+.debug-update-action-label > span[data-current=true] { opacity: 1; filter: blur(0); }
+@media (prefers-reduced-motion: reduce) {
+  .debug-update-action-label, .debug-update-action-label > span { transition: none; }
+}
 .debug-update-copy { color: rgba(255, 255, 255, .75); }
 .debug-update-copy:hover { color: #fff; }
 .debug-update-keys { display: flex; align-items: center; gap: 2px; }
@@ -682,15 +723,33 @@ button[data-slot="smooth-corners"]:focus-visible { outline: 2px solid #69b6ff; o
   background: transparent !important;
   box-shadow: none !important;
 }
+.popover:is(.debug-popover-wrap, .debug-capture-popover)[data-entering=true] {
+  animation: debug-popover-in .23s cubic-bezier(.22, 1, .36, 1);
+}
+.popover:is(.debug-popover-wrap, .debug-capture-popover)[data-exiting=true] {
+  animation: debug-popover-out .17s ease-in;
+  pointer-events: none;
+}
+@keyframes debug-popover-in {
+  from { opacity: 0; transform: translateY(-4px) scale(.96); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes debug-popover-out {
+  from { opacity: 1; transform: none; }
+  to { opacity: 0; transform: translateY(-4px) scale(.96); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .popover:is(.debug-popover-wrap, .debug-capture-popover):is([data-entering=true], [data-exiting=true]) { animation: none; }
+  .debug-toolbar .debug-zoom-trigger, .debug-zoom-trigger-value { transition: none; }
+}
 .debug-popover .debug-section-title { color: rgba(255, 255, 255, .5); text-align: center; font-weight: 500; margin: 0; padding: 4px; }
 .debug-section-title { color: var(--debug-muted); font-weight: 600; margin-top: 4px; }
 .debug-popover .debug-menu-item { height: 36px; padding: 0 10px; justify-content: flex-start; border-radius: 8px; color: rgba(255, 255, 255, .8); }
 .debug-popover .debug-menu-item:hover { background: rgba(255, 255, 255, .1); color: #fff; }
 .debug-popover .debug-placement { gap: 6px; }
 .debug-popover [aria-pressed=true] { background: rgba(255, 255, 255, .14); color: #fff; }
-.debug-preview-menu { width: 248px; gap: 6px; }
-.debug-preview-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
-.debug-preview-build { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.debug-preview-menu { --debug-preview-inset: 8px; width: 248px; gap: 6px; }
+.debug-preview-actions { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
 .debug-preview-actions .button {
   width: 100%;
   min-width: 0;
@@ -709,7 +768,7 @@ button[data-slot="smooth-corners"]:focus-visible { outline: 2px solid #69b6ff; o
   align-items: baseline;
   justify-content: space-between;
   gap: 8px;
-  padding: 4px 8px;
+  padding: 4px var(--debug-preview-inset);
 }
 .debug-preview-context h2 { flex: none; font: inherit; font-weight: 600; }
 .debug-preview-context > span {
@@ -723,7 +782,7 @@ button[data-slot="smooth-corners"]:focus-visible { outline: 2px solid #69b6ff; o
   align-items: center;
   height: 44px;
   gap: 8px;
-  padding: 4px 8px;
+  padding: 4px var(--debug-preview-inset);
   border-radius: 12px;
   color: inherit;
   text-align: left;
@@ -761,11 +820,37 @@ button[data-slot="smooth-corners"]:focus-visible { outline: 2px solid #69b6ff; o
 .debug-preview-footer {
   display: grid;
   gap: 4px;
-  padding: 8px 8px 2px;
+  padding: 8px var(--debug-preview-inset) 2px;
   border-top: 1px solid rgba(255, 255, 255, .12);
   color: rgba(255, 255, 255, .55);
 }
 .debug-preview-notice:empty { position: absolute; }
+.debug-preview-info summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-block: 3px;
+  color: #fff;
+  cursor: pointer;
+  list-style: none;
+}
+.debug-preview-info summary::-webkit-details-marker { display: none; }
+.debug-preview-info summary svg { color: rgb(255 255 255 / 55%); }
+.debug-preview-info[open] summary svg { transform: rotate(180deg); }
+.debug-preview-info-body {
+  display: grid;
+  gap: 10px;
+  max-height: min(280px, 36dvh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-block: 6px 4px;
+  scrollbar-width: thin;
+  font-size: 12px;
+}
+.debug-preview-info-body h2 { margin: 0 0 4px; font: inherit; font-weight: 600; color: #fff; }
+.debug-preview-info-body dl { display: grid; gap: 4px; margin: 0; }
+.debug-preview-info-body dl > div { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr); gap: 8px; }
+.debug-preview-info-body dd { margin: 0; color: rgb(255 255 255 / 86%); text-align: right; overflow-wrap: anywhere; }
 .debug-zoom-value {
   display: flex;
   align-items: center;
@@ -922,10 +1007,12 @@ button[data-slot="smooth-corners"]:focus-visible { outline: 2px solid #69b6ff; o
 .debug-tooltip-host { display: inline-flex; }
 .debug-tooltip {
   position: fixed;
-  z-index: 200;
+  /* HeroUI popovers occupy layer 100000. Hints are portaled to the body. */
+  z-index: 100001;
   display: flex;
   flex-direction: column;
   align-items: center;
+  padding-top: 8px;
   transform: translateX(-50%);
   pointer-events: none;
   animation: debug-tooltip-in .16s ease-out;
@@ -934,13 +1021,20 @@ button[data-slot="smooth-corners"]:focus-visible { outline: 2px solid #69b6ff; o
   from { opacity: 0; transform: translate(-50%, 3px); filter: blur(3px); }
   to { opacity: 1; transform: translate(-50%, 0); filter: blur(0); }
 }
-.debug-tooltip-arrow {
-  width: 22px;
-  height: 8px;
+.debug-tooltip-filter { position: absolute; }
+.debug-tooltip-surface {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-rows: 8px 1fr;
+}
+.debug-tooltip-surface img { display: block; justify-self: center; }
+.debug-tooltip-fill {
+  border-radius: 8px;
   background: rgba(255, 255, 255, .25);
-  clip-path: polygon(0 100%, 44% 7%, 50% 0, 56% 7%, 100% 100%);
 }
 .debug-tooltip-body {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -948,15 +1042,16 @@ button[data-slot="smooth-corners"]:focus-visible { outline: 2px solid #69b6ff; o
   padding: 0 4px 0 8px;
   border-radius: 8px;
   color: #fff;
-  background: rgba(255, 255, 255, .25);
-  -webkit-backdrop-filter: blur(7px);
-  backdrop-filter: blur(7px);
-  box-shadow:
-    inset 0 -1px 1px rgba(255, 255, 255, .1),
-    inset 0 1px 1px rgba(255, 255, 255, .3),
-    inset 0 1px 3px rgba(255, 255, 255, .1);
   font: 500 13px/16px 'MiSans', -apple-system, BlinkMacSystemFont, 'PingFang SC', system-ui, sans-serif;
   white-space: nowrap;
+}
+.debug-tooltip::before {
+  content: '';
+  position: absolute;
+  inset: 8px 0 0;
+  border-radius: 8px;
+  -webkit-backdrop-filter: blur(7px);
+  backdrop-filter: blur(7px);
 }
 .debug-tooltip-label { opacity: .75; }
 .debug-tooltip-body[data-shortcut=false] { padding-inline: 8px; }

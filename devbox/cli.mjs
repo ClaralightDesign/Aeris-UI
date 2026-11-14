@@ -9,7 +9,9 @@ import { tmpdir } from 'node:os';
 import { dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
+import { setTimeout as delay } from 'node:timers/promises';
 import { createServer } from 'vite';
+import { parse } from 'smol-toml';
 import { createFavicon } from './native/favicon.mjs';
 
 const root = fileURLToPath(new URL('.', import.meta.url));
@@ -40,6 +42,14 @@ const defaultCache = toolCache('.cache/aeris-devbox', 'lvgl/lvgl.h')
   ?? toolCache('.cache/aeris-gallery-web', 'lvgl/lvgl.h')
   ?? resolve(project, '.cache/aeris-devbox');
 const bundledTools = resolve(defaultCache, 'emsdk/upstream/emscripten');
+function readToml(path) {
+  try { return parse(readFileSync(path, 'utf8')); } catch { return undefined; }
+}
+
+const devboxPackage = readToml(join(aerisRoot, 'crates/cargo-aeris-devbox/Cargo.toml'))?.package;
+const devboxVersion = devboxPackage?.version?.workspace
+  ? readToml(join(aerisRoot, 'Cargo.toml'))?.workspace?.package?.version
+  : devboxPackage?.version;
 const existingRust = toolCache('.toolchain', 'rustup');
 const target = 'wasm32-unknown-emscripten';
 const agentDirectory = mkdtempSync(join(realpathSync(tmpdir()), 'aeris-devbox-'));
@@ -154,7 +164,7 @@ function resolveTools() {
   const info = spawnSync(emcc, ['--version'], { env, encoding: 'utf8' });
   if (info.status !== 0) throw new Error('请激活 Emscripten SDK 4.0.20，或设置 EMCC 和 EMAR。');
   const compiler = createHash('sha256').update(JSON.stringify([emcc, emar, lvgl, info.stdout, env.EMSDK_CONFIG])).digest('hex').slice(0, 12);
-  return { lvgl, emcc, emar, env, cargo, compiler };
+  return { lvgl, emcc, emar, env, cargo, compiler, emscripten: info.stdout.split('\n')[0].match(/\b\d+\.\d+\.\d+\b/)?.[0] };
 }
 
 let child;
@@ -174,13 +184,47 @@ let active = false;
 let debounce;
 let publishedProject;
 
+function projectContext(settings) {
+  return {
+    title: settings.title,
+    scenes: (settings.scenes ?? []).map(({ id, title }) => ({ id, title })),
+  };
+}
+
 function projectInfo(settings) {
-  return { title: settings.title, scenes: (settings.scenes ?? []).map(({ id, title }) => ({ id, title })) };
+  const canopus = settings.manifest && readToml(resolve(project, settings.manifest, '../Canopus.toml'));
+  return {
+    ...projectContext(settings),
+    app: {
+      id: canopus?.native_app?.app_id ?? canopus?.module?.id,
+      module: canopus?.module?.id,
+      version: canopus?.module?.version,
+      versionCode: canopus?.module?.version_code,
+      abi: canopus?.module?.canopus_abi,
+      targets: canopus?.targets?.include,
+    },
+    tools: { devbox: devboxVersion },
+  };
+}
+
+function dependencyInfo(metadata, rootPackage) {
+  const graph = new Map(metadata.resolve?.nodes.map((node) => [node.id, node.dependencies]));
+  const pending = [rootPackage.id];
+  const reachable = new Set();
+  for (const id of pending) {
+    if (reachable.has(id)) continue;
+    reachable.add(id);
+    pending.push(...(graph.get(id) ?? []));
+  }
+  return metadata.packages
+    .filter(({ id, name }) => reachable.has(id) && ['canopus-runtime', 'canopus-abi', 'aeris-ui'].includes(name))
+    .map(({ name, version, source }) => ({ name, version, revision: source?.match(/#([a-f0-9]{7,})$/i)?.[1], local: !source }));
 }
 
 function agentBuildState() {
+  const { title, scenes } = publishedProject;
   return {
-    ...publishedProject,
+    title, scenes,
     state: queuedBuildId !== null ? 'queued' : publishedBuildId === null && buildStatus === 'ready' ? 'building' : buildStatus,
     buildId,
     publishedBuildId,
@@ -232,11 +276,12 @@ function watch(paths) {
 }
 
 async function build() {
-  if (demo) return { title: 'DevBox Demo', scenes: [] };
+  if (demo) return projectInfo({ title: 'DevBox Demo' });
   const settings = config();
   const manifest = resolve(project, settings.manifest);
-  watch([manifest, resolve(manifest, '../src'), ...(settings.watch ?? []).map((path) => resolve(project, path))]);
-  const { lvgl, emcc, emar, env, cargo, compiler } = resolveTools();
+  watch([manifest, resolve(manifest, '../src'), resolve(manifest, '../Canopus.toml'),
+    ...(settings.watch ?? []).map((path) => resolve(project, path))]);
+  const { lvgl, emcc, emar, env, cargo, compiler, emscripten } = resolveTools();
   const cargoEnvironment = {
     ...env,
     CARGO_TARGET_DIR: cargoTarget,
@@ -249,6 +294,10 @@ async function build() {
   const packageInfo = metadata.packages.find(({ manifest_path }) => manifest_path === manifest);
   const library = packageInfo?.targets.find(({ crate_types }) => crate_types.includes('staticlib'));
   if (!library) throw new Error('预览 Cargo.toml 需要声明 [lib] crate-type = ["staticlib"]。');
+  const info = projectInfo(settings);
+  const lvglHeader = join(lvgl, 'lv_version.h');
+  const versionHeader = existsSync(lvglHeader) ? readFileSync(lvglHeader, 'utf8') : '';
+  const lvglVersion = ['MAJOR', 'MINOR', 'PATCH'].map((part) => versionHeader.match(new RegExp(`#define\\s+LVGL_VERSION_${part}\\s+(\\d+)`))?.[1]);
   for (const dependency of metadata.packages.filter(({ source }) => source === null)) {
     const folder = resolve(dependency.manifest_path, '..');
     watch([dependency.manifest_path, join(folder, 'src'), ...dependency.targets.map(({ src_path }) => src_path)]);
@@ -284,7 +333,12 @@ async function build() {
   } finally {
     rmSync(staging, { force: true });
   }
-  return projectInfo(settings);
+  return {
+    ...info,
+    app: { ...info.app, package: packageInfo.name, version: info.app.version ?? packageInfo.version },
+    tools: { ...info.tools, dependencies: dependencyInfo(metadata, packageInfo), emscripten,
+      lvgl: lvglVersion.every(Boolean) ? lvglVersion.join('.') : undefined },
+  };
 }
 
 async function runQueued() {
@@ -297,7 +351,13 @@ async function runQueued() {
   queuedClean = false;
   queuedRefresh = false;
   updateStatus('building');
+  const simulate = demo && refresh;
   try {
+    if (simulate) {
+      await delay(1500);
+      if (stopped) return;
+      if (Math.random() < 0.5) throw new Error('Demo：模拟构建失败，已保留当前预览。');
+    }
     if (clean && !demo) {
       rmSync(cargoTarget, { recursive: true, force: true });
       rmSync(native, { recursive: true, force: true });
@@ -312,6 +372,7 @@ async function runQueued() {
     if (!stopped) {
       log('error', error.message + '\n');
       updateStatus('failed', refresh);
+      if (simulate) await delay(1500);
     }
   } finally {
     active = false;
@@ -365,13 +426,9 @@ async function serve(req, res, next) {
       res.writeHead(200, { 'Content-Type': 'image/png' }).end(icon);
     } else if (url.pathname === '/devbox-project.json') {
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
-      if (demo) {
-        res.end(JSON.stringify({ title: 'DevBox Demo', scenes: [], status: buildStatus, logs: history, hasPreview: true, demo }));
-        return;
-      }
-      const { title, scenes } = projectInfo(config());
-      res.end(JSON.stringify({ title, scenes,
-        status: buildStatus, logs: history, hasPreview: existsSync(preview) }));
+      const { title, scenes } = demo ? publishedProject : projectContext(config());
+      res.end(JSON.stringify({ title, scenes, app: publishedProject.app, tools: publishedProject.tools,
+        status: buildStatus, logs: history, hasPreview: demo || existsSync(preview), demo }));
     } else if (url.pathname === '/devbox-source') {
       if (!/^(localhost|127\.0\.0\.1)(:\d+)?$/i.test(req.headers.host ?? '')) {
         res.statusCode = 403;
@@ -435,7 +492,7 @@ async function shutdown() {
 }
 
 try {
-  publishedProject = demo ? { title: 'DevBox Demo', scenes: [] } : projectInfo(config());
+  publishedProject = projectInfo(demo ? { title: 'DevBox Demo' } : config());
   const { createAgent } = await import('./agent.mjs');
   agent = createAgent({ buildState: agentBuildState, directory: agentDirectory });
   if (agentMode) httpServer = createHttpServer();

@@ -17,7 +17,7 @@ import { RectangleDashedIcon } from '@phosphor-icons/react/dist/csr/RectangleDas
 import { RulerIcon } from '@phosphor-icons/react/dist/csr/Ruler';
 import { SidebarSimpleIcon } from '@phosphor-icons/react/dist/csr/SidebarSimple';
 import { TerminalWindowIcon } from '@phosphor-icons/react/dist/csr/TerminalWindow';
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode } from 'react';
+import { Fragment, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import Scritto from '@scritto/react';
 import { Inspector } from './inspector';
@@ -31,10 +31,31 @@ import logo from './assets/VerisDevBox.svg';
 import picker from './assets/PaperPlaneTilt.svg';
 import recordFull from './assets/RecordFull.svg';
 import recordArea from './assets/RecordArea.svg';
+import tooltipArrow from './assets/TooltipArrow.svg';
 import { downloadBlob, encodeAnimatedWebp, encodeGif, encodeScreenshot, type RecordedFrame } from './export';
 import './workspace.css';
 
 const views = ['元素', '控制台', '源代码', '资源', '性能', '图层'] as const;
+const copyPromptLabels = { idle: '复制提示词', copying: '复制中…', copied: '已复制', failed: '复制失败' };
+
+function BuildActionLabel({ value, labels }: { value: string; labels: string[] }) {
+  const current = useRef<HTMLSpanElement>(null);
+  const [labelWidth, setLabelWidth] = useState(0);
+  useLayoutEffect(() => {
+    const label = current.current;
+    if (!label) return;
+    const measure = () => setLabelWidth(label.getBoundingClientRect().width);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(label);
+    return () => observer.disconnect();
+  }, [value]);
+  return <span className="debug-update-action-label" style={{ width: labelWidth }}>
+    {labels.map((label) => <span key={label} data-current={label === value}
+      ref={label === value ? current : undefined}
+      aria-hidden={label !== value}>{label}</span>)}
+  </span>;
+}
 type View = typeof views[number];
 type Status = 'ready' | 'building' | 'failed';
 type Project = {
@@ -44,10 +65,72 @@ type Project = {
   hasPreview: boolean;
   logs: Omit<Log, 'source'>[];
   demo?: boolean;
+  app?: { id?: string; module?: string; version?: string; versionCode?: number; abi?: string; package?: string; targets?: string[] };
+  tools?: {
+    devbox?: string;
+    lvgl?: string;
+    emscripten?: string;
+    dependencies?: { name: string; version: string; revision?: string; local: boolean }[];
+  };
 };
 type Source = { name: string; text: string };
 type AgentAccess = 'cli' | 'mcp';
 type AgentSettings = Record<AgentAccess, boolean> & { cliSession?: string; mcpConfig?: object };
+function PreviewInfo({ project, scene, height, zoom, status }: {
+  project?: Project;
+  scene?: string;
+  height: number;
+  zoom: number;
+  status: Status;
+}) {
+  const { app, tools, demo } = project ?? {};
+  const dependencies = Object.entries({
+    'canopus-runtime': 'Canopus Runtime', 'canopus-abi': 'Canopus ABI crate', 'aeris-ui': 'AerisUI',
+  }).flatMap<readonly [string, ReactNode]>(([name, label]) => {
+    const matches = tools?.dependencies?.filter((item) => item.name === name) ?? [];
+    return matches.length ? matches.map(({ version, revision, local }) => [
+      label, <span title={revision}>{version}{revision ? ` · ${revision.slice(0, 8)}` : local ? ' · 本地' : ''}</span>,
+    ] as const) : [[label, demo ? '演示模式未加载' : '—'] as const];
+  });
+  const groups: { title: string; rows: (readonly [string, ReactNode])[] }[] = [
+    { title: '设备', rows: [
+      ['机型', '小米手环 10 Pro'],
+      ['屏幕分辨率', `${width} × 480 px`],
+      ...(height === 480 ? [] : [['预览区域', `${width} × ${height} px`] as const]),
+      ['画布缩放', `${zoom.toFixed(1)}%`],
+    ] },
+    { title: '应用', rows: [
+      ['名称', project?.title ?? '等待项目加载'],
+      ...(scene ? [['场景', scene] as const] : []),
+      ...(demo ? [['运行模式', '内部演示'] as const] : [
+        ['应用 ID', app?.id ?? '—'] as const,
+        ...(app?.module && app.module !== app.id ? [['模块 ID', app.module] as const] : []),
+        ['应用版本', app?.version ?? '—'] as const,
+        ...(app?.versionCode !== undefined ? [['构建编号', app.versionCode] as const] : []),
+        ...(app?.package ? [['Cargo 包', app.package] as const] : []),
+        ...(app?.targets?.length ? [['声明的设备目标', app.targets.join('、')] as const] : []),
+        ['构建状态', { ready: '就绪', building: '构建中', failed: '构建失败' }[status]] as const,
+      ]),
+    ] },
+    { title: '工具链', rows: [
+      ['DevBox', tools?.devbox ?? '—'],
+      ...dependencies,
+      ...(app?.abi ? [['应用 ABI 版本', app.abi] as const] : []),
+      ['渲染引擎', demo ? 'Canvas 2D' : `LVGL${tools?.lvgl ? ` ${tools.lvgl}` : ''}`],
+      ...(demo ? [] : [['运行目标', 'wasm32-unknown-emscripten'] as const, ['Emscripten', tools?.emscripten ?? '—'] as const]),
+    ] },
+  ];
+  return <details className="debug-preview-info">
+    <summary><span>设备、应用与版本</span><CaretDownIcon size={12} aria-hidden="true" /></summary>
+    <div className="debug-preview-info-body">
+      {groups.map(({ title, rows }) => <section key={title}>
+        <h2>{title}</h2>
+        <dl>{rows.map(([label, value], index) => <div key={`${label}-${index}`}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
+      </section>)}
+    </div>
+  </details>;
+}
+
 const agentOptions = [
   { kind: 'cli', label: 'Agent CLI', icon: TerminalWindowIcon, copy: '复制会话路径' },
   { kind: 'mcp', label: 'MCP', icon: LinkIcon, copy: '复制 MCP 配置' },
@@ -165,8 +248,11 @@ function ZoomPercentInput({ percent, onChange }: { percent: number; onChange: (p
 
 function Hint({ label, keys, children, hidden }: { label: string; keys?: ReactNode; children: ReactNode; hidden?: boolean }) {
   const host = useRef<HTMLSpanElement>(null);
+  const tooltip = useRef<HTMLSpanElement>(null);
+  const shadowId = useId();
   const [open, setOpen] = useState(false);
-  const [position, setPosition] = useState({ top: 0, left: 0 });
+  const [anchor, setAnchor] = useState({ top: 0, x: 0 });
+  const [placement, setPlacement] = useState({ center: 0, arrowOffset: 0 });
   useEffect(() => {
     if (hidden) setOpen(false);
   }, [hidden]);
@@ -174,10 +260,24 @@ function Hint({ label, keys, children, hidden }: { label: string; keys?: ReactNo
     if (hidden) return;
     const rect = host.current?.getBoundingClientRect();
     if (!rect) return;
-    const center = rect.left + rect.width / 2;
-    setPosition({ top: rect.bottom + 6, left: Math.min(window.innerWidth - 72, Math.max(72, center)) });
+    setAnchor({ top: rect.bottom + 6, x: rect.left + rect.width / 2 });
     setOpen(true);
   }
+  useLayoutEffect(() => {
+    const element = tooltip.current;
+    if (!element) return;
+    function place(width: number) {
+      const inset = 8;
+      const half = width / 2;
+      const center = Math.max(half + inset, Math.min(document.documentElement.clientWidth - half - inset, anchor.x));
+      const limit = Math.max(0, half - 11 - inset);
+      setPlacement({ center, arrowOffset: Math.max(-limit, Math.min(limit, anchor.x - center)) });
+    }
+    place(element.getBoundingClientRect().width);
+    const observer = new ResizeObserver(() => place(element.getBoundingClientRect().width));
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [anchor.x, open, hidden]);
   function hide() {
     setOpen(false);
   }
@@ -194,8 +294,36 @@ function Hint({ label, keys, children, hidden }: { label: string; keys?: ReactNo
     onMouseEnter={show} onMouseLeave={hide} onFocusCapture={show} onBlurCapture={hide}>
     {children}
     {open && !hidden && createPortal(
-      <span className="debug-tooltip" style={{ top: position.top, left: position.left }} role="tooltip">
-        <span className="debug-tooltip-arrow" aria-hidden="true" />
+      <span ref={tooltip} className="debug-tooltip" style={{ top: anchor.top, left: placement.center }} role="tooltip">
+        <svg className="debug-tooltip-filter" width="0" height="0" aria-hidden="true">
+          <defs>
+            <filter id={shadowId} colorInterpolationFilters="sRGB">
+              {/* The exported arrow and the body both have a 25% white fill. */}
+              <feComponentTransfer in="SourceAlpha" result="silhouette">
+                <feFuncA type="linear" slope={4} />
+              </feComponentTransfer>
+              {([{ dy: -1, blur: 1, opacity: .1 }, { dy: 1, blur: 1, opacity: .3 }, { dy: 1, blur: 3, opacity: .1 }]).map(
+                ({ dy, blur, opacity }, index) => <Fragment key={index}>
+                  <feOffset in="silhouette" dy={dy} result="offset" />
+                  <feGaussianBlur in="offset" stdDeviation={blur / 2} result="blurred" />
+                  <feComposite in="silhouette" in2="blurred" operator="out" result="edge" />
+                  <feFlood floodColor="white" floodOpacity={opacity} result="highlight" />
+                  <feComposite in="highlight" in2="edge" operator="in" result={`shadow${index}`} />
+                </Fragment>,
+              )}
+              <feMerge>
+                <feMergeNode in="SourceGraphic" />
+                <feMergeNode in="shadow2" />
+                <feMergeNode in="shadow1" />
+                <feMergeNode in="shadow0" />
+              </feMerge>
+            </filter>
+          </defs>
+        </svg>
+        <span className="debug-tooltip-surface" aria-hidden="true" style={{ filter: `url("#${shadowId}")` }}>
+          <img src={tooltipArrow} width={22} height={8} alt="" style={{ transform: `translateX(${placement.arrowOffset}px)` }} />
+          <Smooth radius={8}><span className="debug-tooltip-fill" /></Smooth>
+        </span>
         <Smooth radius={8}><span className="debug-tooltip-body" data-shortcut={!!keys}>
           <span className="debug-tooltip-label">{label}</span>
           {keys && <span className="debug-tooltip-keys">{keys}</span>}
@@ -330,6 +458,7 @@ export function Component() {
     try {
       const response = await fetch('/devbox-build?' + new URLSearchParams({ mode }), { method: 'POST' });
       if (!response.ok) throw new Error();
+      if (project?.demo) setControlsOpen(false);
     } catch {
       setNotice('无法请求重新构建');
     } finally {
@@ -340,6 +469,16 @@ export function Component() {
   const previewParams = new URLSearchParams({ scene: scene?.id ?? '', debug: '1', revision: String(generation) });
   const previewUrl = '/preview.html?' + previewParams;
   const { viewport, scale, space, dragging, reset, setPercent } = useCanvasViewport(stage, preview, frameReady, previewUrl);
+  const zoomLabel = `${viewport.percent.toFixed(1)}%`;
+  const previousZoom = useRef(viewport.percent);
+  const [zoomExpanded, setZoomExpanded] = useState(false);
+  useEffect(() => {
+    if (viewport.percent === previousZoom.current) return;
+    previousZoom.current = viewport.percent;
+    setZoomExpanded(true);
+    const timer = window.setTimeout(() => setZoomExpanded(false), 1500);
+    return () => window.clearTimeout(timer);
+  }, [viewport.percent]);
   const renderer = () => (preview.current?.contentWindow as PreviewWindow | null)?.aerisDebugger;
   const selected = snapshot.nodes.find((node) => node.id === selectedId) ?? snapshot.nodes[0];
   const inspected = inspectorOpen && view === '元素' && !areaMode
@@ -1074,9 +1213,13 @@ export function Component() {
           <Hint label="标尺" keys={shortcut('R')}>
             <Smooth radius={6}><Button isIconOnly variant="ghost" className="debug-icon" aria-label="显示标尺" aria-pressed={ruler} onPress={() => setRuler(!ruler)}><RulerIcon size={18} aria-hidden="true" /></Button></Smooth>
           </Hint>
-          <Hint label="缩放" hidden={zoomOpen}>
+          <Hint label="缩放" hidden={zoomOpen || zoomExpanded}>
             <Popover isOpen={zoomOpen} onOpenChange={setZoomOpen}>
-              <Smooth radius={6}><Button isIconOnly variant="ghost" className="debug-icon" aria-label="缩放"><MagnifyingGlassPlusIcon size={18} aria-hidden="true" /></Button></Smooth>
+              <Smooth radius={6}><Button variant="ghost" className="debug-icon debug-zoom-trigger" aria-label="缩放"
+                data-expanded={zoomExpanded} style={{ '--debug-zoom-digits': zoomLabel.length - 2 } as CSSProperties}>
+                <MagnifyingGlassPlusIcon size={18} aria-hidden="true" />
+                <span className="debug-zoom-trigger-value" aria-hidden="true"><Scritto value={zoomLabel} /></span>
+              </Button></Smooth>
               <Popover.Content className="debug-popover-wrap"><Smooth radius={20} stroke={popoverStroke}><Popover.Dialog aria-label="缩放" className="debug-popover">
                 <span className="debug-section-title">缩放</span>
                 <ZoomPercentInput percent={viewport.percent} onChange={setPercent} />
@@ -1195,28 +1338,22 @@ export function Component() {
               <Popover.Content placement="bottom end" className="debug-popover-wrap">
                 <Smooth radius={20} stroke={popoverStroke}><Popover.Dialog className="debug-popover debug-preview-menu" aria-label="设置">
                   <div className="debug-preview-actions">
-                    <Smooth radius={12}><Button variant="ghost" onPress={() => setGeneration((value) => value + 1)}>
-                      <ArrowClockwiseIcon size={16} aria-hidden="true" />重载
-                    </Button></Smooth>
-                    <Smooth radius={12}><Button variant="ghost" onPress={async () => {
-                      try { await navigator.clipboard.writeText(location.href); setNotice('已复制预览链接'); }
-                      catch { setNotice('无法复制预览链接'); }
-                    }}>
-                      <LinkIcon size={16} aria-hidden="true" />复制链接
-                    </Button></Smooth>
-                    <Smooth radius={12}><Button variant="ghost" isDisabled={!snapshot.nodes.length} onPress={() => void saveScreenshot('png')}>
-                      <CameraPlusIcon size={18} aria-hidden="true" />截图
-                    </Button></Smooth>
-                  </div>
-                  <div className="debug-preview-actions debug-preview-build">
-                    <Smooth radius={12}><Button variant="ghost" isDisabled={!project || buildRequest}
-                      onPress={() => void requestBuild('rebuild')}>
-                      <HammerIcon size={16} aria-hidden="true" />重新构建
-                    </Button></Smooth>
-                    <Smooth radius={12}><Button variant="ghost" isDisabled={!project || project.demo || buildRequest}
-                      onPress={() => void requestBuild('clean')}>
-                      <BroomIcon size={16} aria-hidden="true" />清理构建缓存
-                    </Button></Smooth>
+                    <Hint label="重载"><Smooth radius={12}><Button isIconOnly variant="ghost" aria-label="重载"
+                      onPress={() => setGeneration((value) => value + 1)}>
+                      <ArrowClockwiseIcon size={18} aria-hidden="true" />
+                    </Button></Smooth></Hint>
+                    <Hint label="截图"><Smooth radius={12}><Button isIconOnly variant="ghost" aria-label="截图"
+                      isDisabled={!snapshot.nodes.length} onPress={() => void saveScreenshot('png')}>
+                      <CameraPlusIcon size={18} aria-hidden="true" />
+                    </Button></Smooth></Hint>
+                    <Hint label="重新构建"><Smooth radius={12}><Button isIconOnly variant="ghost" aria-label="重新构建"
+                      isDisabled={!project || buildRequest} onPress={() => void requestBuild('rebuild')}>
+                      <HammerIcon size={18} aria-hidden="true" />
+                    </Button></Smooth></Hint>
+                    <Hint label="清理构建缓存"><Smooth radius={12}><Button isIconOnly variant="ghost" aria-label="清理构建缓存"
+                      isDisabled={!project || project.demo || buildRequest} onPress={() => void requestBuild('clean')}>
+                      <BroomIcon size={18} aria-hidden="true" />
+                    </Button></Smooth></Hint>
                   </div>
                   <div className="debug-preview-section">
                     <div className="debug-preview-context">
@@ -1259,7 +1396,7 @@ export function Component() {
                     })}
                   </div>
                   <footer className="debug-preview-footer">
-                    <span>小米手环 10 Pro · 336 × 480</span>
+                    <PreviewInfo project={project} scene={scene?.title} height={snapshot.height} zoom={viewport.percent} status={status} />
                     <span className="debug-preview-notice" role="status">{notice}</span>
                   </footer>
                 </Popover.Dialog></Smooth>
@@ -1349,10 +1486,12 @@ export function Component() {
               </span>{errorCount}个错误</> : '构建失败'}
             </span>
             <Smooth radius={8}><button type="button" className="debug-update-action" onClick={() => openView('控制台')}>
-              查看详情<Smooth radius={4}><span className="debug-update-key">enter</span></Smooth>
+              <BuildActionLabel value={inspectorOpen && view === '控制台' ? '已打开控制台' : '查看详情'}
+                labels={['查看详情', '已打开控制台']} />
+              <Smooth radius={4}><span className="debug-update-key">enter</span></Smooth>
             </button></Smooth>
             <Smooth radius={8}><button type="button" className="debug-update-action debug-update-copy" onClick={() => void copyPrompt()}>
-              <span>{copyState === 'copying' ? '复制中…' : copyState === 'copied' ? '已复制' : copyState === 'failed' ? '复制失败' : '复制提示词'}</span>
+              <BuildActionLabel value={copyPromptLabels[copyState]} labels={Object.values(copyPromptLabels)} />
               <span className="debug-update-keys">
                 {apple
                   ? <Smooth radius={4}><span className="debug-update-key debug-update-key-icon"><CommandIcon size={14} aria-hidden="true" /></span></Smooth>
