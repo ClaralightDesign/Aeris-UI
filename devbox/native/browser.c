@@ -31,6 +31,14 @@ typedef struct Bitmap {
 static Bitmap *bitmaps;
 static lv_font_t fonts[5][3];
 
+typedef struct {
+    const uint8_t *bitmap;
+    int px;
+    unsigned weight;
+} FontData;
+
+static FontData font_data[5][3];
+
 typedef uint8_t Bgr[3];
 
 static Bgr blur_pixels[BLUR_HEIGHT][BLUR_WIDTH];
@@ -193,31 +201,48 @@ const lv_image_dsc_t *gallery_capture_backdrop(lv_obj_t *root) {
 }
 
 /* 使用浏览器的中文字体补齐 Linoval 标签没有的字形。 */
-EM_JS(void, browser_glyph, (unsigned letter, unsigned height, unsigned baseline, unsigned stride, uint8_t *pixels), {
+EM_JS(void, browser_glyph, (unsigned letter, int px, unsigned weight, int16_t *metrics, unsigned stride, uint8_t *pixels), {
     const glyphs = Module.galleryGlyphs || (Module.galleryGlyphs = new Map());
-    const key = height + ":" + baseline + ":" + letter;
-    let alpha = glyphs.get(key);
-    if (!alpha) {
-        const canvas = Module.galleryGlyphCanvas || (Module.galleryGlyphCanvas = document.createElement("canvas"));
-        canvas.width = height;
-        canvas.height = height;
-        const context = canvas.getContext("2d", { willReadFrequently: true });
-        context.font = '500 ' + Math.round(height * 0.9) + 'px MiSans, "PingFang SC", "Noto Sans CJK SC", sans-serif';
-        context.textAlign = "center";
-        context.fillText(String.fromCodePoint(letter), height / 2, height - baseline);
-        const data = context.getImageData(0, 0, height, height).data;
-        alpha = new Uint8Array(height * height);
-        for (let i = 0; i < alpha.length; i++) alpha[i] = data[i * 4 + 3];
+    const key = px + ":" + weight + ":" + letter;
+    const context = Module.galleryGlyphContext || (Module.galleryGlyphContext =
+        document.createElement("canvas").getContext("2d", { willReadFrequently: true }));
+    let glyph = glyphs.get(key);
+    if (!glyph) {
+        const text = String.fromCodePoint(letter);
+        const font = weight + ' ' + px + 'px "Aeris MiSans ' + weight +
+            '", MiSans, "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif';
+        context.font = font;
+        const bounds = context.measureText(text);
+        const left = Math.floor(-bounds.actualBoundingBoxLeft);
+        const right = Math.ceil(bounds.actualBoundingBoxRight);
+        const top = Math.floor(-bounds.actualBoundingBoxAscent);
+        const bottom = Math.ceil(bounds.actualBoundingBoxDescent);
+        glyph = { text, font, metrics: [Math.round(bounds.width), right - left, bottom - top, left, -bottom] };
         if (glyphs.size >= 128) glyphs.delete(glyphs.keys().next().value);
-        glyphs.set(key, alpha);
+        glyphs.set(key, glyph);
+    }
+    if (metrics) {
+        HEAP16.set(glyph.metrics, metrics >>> 1);
+        return;
+    }
+    const [, width, height, left, offsetY] = glyph.metrics;
+    if (!glyph.alpha) {
+        context.canvas.width = width;
+        context.canvas.height = height;
+        context.font = glyph.font;
+        context.fillText(glyph.text, -left, height + offsetY);
+        const data = context.getImageData(0, 0, width, height).data;
+        glyph.alpha = new Uint8Array(width * height);
+        for (let i = 0; i < glyph.alpha.length; i++) glyph.alpha[i] = data[i * 4 + 3];
     }
     for (let y = 0; y < height; y++) {
-        HEAPU8.set(alpha.subarray(y * height, (y + 1) * height), pixels + stride * y);
+        HEAPU8.set(glyph.alpha.subarray(y * width, (y + 1) * width), pixels + stride * y);
     }
 });
 
 static bool describe_glyph(const lv_font_t *font, lv_font_glyph_dsc_t *glyph, uint32_t letter, uint32_t next) {
     (void)next;
+    const FontData *data = font->dsc;
     size_t index;
     if (letter == 9) index = 0;
     else if (letter >= 32 && letter <= 126) index = letter - 32;
@@ -226,18 +251,22 @@ static bool describe_glyph(const lv_font_t *font, lv_font_glyph_dsc_t *glyph, ui
     else if (letter == 0xB7) index = 97;
     else if (letter == 0x2013) index = 98;
     else if (letter == 0x2212) index = 99;
-    else if (letter >= 0x3400 && letter <= 0x9fff && font != &fonts[3][1] && font != &fonts[4][0]) {
-        glyph->adv_w = font->line_height;
-        glyph->box_w = font->line_height;
-        glyph->box_h = font->line_height;
-        glyph->ofs_x = 0;
-        glyph->ofs_y = -font->base_line;
+    else if (font != &fonts[3][1] && font != &fonts[4][0] &&
+             ((letter >= 0x3000 && letter <= 0x303f) ||
+              (letter >= 0x3400 && letter <= 0x9fff) ||
+              (letter >= 0xff01 && letter <= 0xff60))) {
+        int16_t metrics[5];
+        browser_glyph(letter, data->px, data->weight, metrics, 0, NULL);
+        glyph->adv_w = metrics[0];
+        glyph->box_w = metrics[1];
+        glyph->box_h = metrics[2];
+        glyph->ofs_x = metrics[3];
+        glyph->ofs_y = metrics[4];
         glyph->format = LV_FONT_GLYPH_FORMAT_A8;
         glyph->gid.index = 0x10000 + letter;
         return true;
     } else return false;
 
-    const uint8_t *data = font->dsc;
     if (font == &fonts[3][1]) {
         if (letter == ':') index = 10;
         else if (letter >= '0' && letter <= '9') index = letter - '0';
@@ -249,7 +278,7 @@ static bool describe_glyph(const lv_font_t *font, lv_font_glyph_dsc_t *glyph, ui
         if (!found) return false;
         index = (size_t)(found - repertoire);
     }
-    const uint8_t *metric = data + 2 + 7 * index;
+    const uint8_t *metric = data->bitmap + 2 + 7 * index;
     glyph->adv_w = metric[2] * (letter == 9 ? 2 : 1);
     glyph->box_w = metric[3];
     glyph->box_h = metric[4];
@@ -263,14 +292,14 @@ static bool describe_glyph(const lv_font_t *font, lv_font_glyph_dsc_t *glyph, ui
 static const void *read_glyph(lv_font_glyph_dsc_t *glyph, lv_draw_buf_t *buffer) {
     if (!buffer || !glyph->box_w || !glyph->box_h) return NULL;
     const lv_font_t *font = glyph->resolved_font;
+    const FontData *data = font->dsc;
     if (glyph->gid.index >= 0x10000) {
-        browser_glyph(glyph->gid.index - 0x10000, font->line_height, font->base_line,
+        browser_glyph(glyph->gid.index - 0x10000, data->px, data->weight, NULL,
                       buffer->header.stride, buffer->data);
         return buffer;
     }
-    const uint8_t *data = font->dsc;
     const size_t count = font == &fonts[3][1] ? 11 : font == &fonts[4][0] ? 9 : 100;
-    const uint8_t *pixels = data + 2 + 7 * count + glyph->gid.index;
+    const uint8_t *pixels = data->bitmap + 2 + 7 * count + glyph->gid.index;
     for (uint16_t y = 0; y < glyph->box_h; y++) {
         memcpy(buffer->data + y * buffer->header.stride, pixels + y * glyph->box_w, glyph->box_w);
     }
@@ -283,14 +312,18 @@ static int font_slot(uint32_t family, int px) {
 }
 
 void gallery_font(uint32_t font, int px, const uint8_t *data) {
-    fonts[font][font_slot(font, px)] = (lv_font_t) {
+    static const unsigned weights[] = { 400, 500, 500, 650, 650 };
+    const int slot = font_slot(font, px);
+    FontData *style = &font_data[font][slot];
+    *style = (FontData) { .bitmap = data, .px = px, .weight = weights[font] };
+    fonts[font][slot] = (lv_font_t) {
         .get_glyph_dsc = describe_glyph,
         .get_glyph_bitmap = read_glyph,
         .line_height = data[0],
         .base_line = data[1],
         .underline_position = -1,
         .underline_thickness = 1,
-        .dsc = data,
+        .dsc = style,
     };
 }
 

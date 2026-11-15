@@ -319,7 +319,7 @@ async function build() {
 
   const staging = join(buildRoot, 'preview.tmp.html');
   try {
-    await run(emcc, ['-Os', '-flto', '-sSINGLE_FILE=1', '-sEXPORTED_RUNTIME_METHODS=UTF8ToString', '-sALLOW_MEMORY_GROWTH=1', '-sSTACK_SIZE=131072',
+    await run(emcc, ['-Os', '-flto', '-sSINGLE_FILE=1', '-sEXPORTED_RUNTIME_METHODS=UTF8ToString,callMain', '-sALLOW_MEMORY_GROWTH=1', '-sSTACK_SIZE=131072',
       '--shell-file', join(root, 'native/shell.html'), 'browser.o',
       join(cargoEnvironment.CARGO_TARGET_DIR, target, 'release', 'lib' + library.name.replaceAll('-', '_') + '.a'),
       'liblvgl.a', '-o', staging],
