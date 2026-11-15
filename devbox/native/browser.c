@@ -2,6 +2,7 @@
 
 #include "lvgl.h"
 #include "src/core/lv_obj_class_private.h"
+#include "src/core/lv_obj_scroll_private.h"
 #include "src/misc/cache/instance/lv_image_cache.h"
 #include <emscripten.h>
 #include <stdlib.h>
@@ -17,6 +18,8 @@ static uint32_t framebuffer[WIDTH * HEIGHT];
 static lv_indev_t *pointer;
 static lv_point_t point;
 static bool pressed;
+static lv_obj_t *wheel_target;
+static lv_timer_t *wheel_timer;
 
 typedef struct Bitmap {
     struct Bitmap *next;
@@ -547,14 +550,90 @@ static void read_pointer(lv_indev_t *device, lv_indev_data_t *data) {
     data->state = pressed ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
 }
 
+static void wheel_target_deleted(lv_event_t *event) {
+    if (lv_event_get_target(event) == wheel_target) wheel_target = NULL;
+}
+
+static void finish_wheel(lv_timer_t *timer) {
+    lv_timer_pause(timer);
+    lv_obj_t *obj = wheel_target;
+    if (!obj) return;
+    wheel_target = NULL;
+    lv_obj_remove_event_cb(obj, wheel_target_deleted);
+    if (lv_obj_send_event(obj, LV_EVENT_SCROLL_END, NULL) != LV_RESULT_OK) return;
+    if (lv_obj_get_scroll_snap_x(obj) != LV_SCROLL_SNAP_NONE ||
+        lv_obj_get_scroll_snap_y(obj) != LV_SCROLL_SNAP_NONE) {
+        lv_obj_update_snap(obj, LV_ANIM_ON);
+    }
+}
+
 EMSCRIPTEN_KEEPALIVE void gallery_pointer(int x, int y, int phase) {
     if (!pointer) return;
+    if (phase == 0 && wheel_target) finish_wheel(wheel_timer);
     point = (lv_point_t){ x, y };
     if (phase == 3) {
         lv_indev_wait_release(pointer);
     }
     pressed = phase == 0 || phase == 1;
     lv_indev_read(pointer);
+}
+
+static int32_t wheel_room(lv_obj_t *obj, lv_dir_t direction) {
+    switch (direction) {
+        case LV_DIR_LEFT: return lv_obj_get_scroll_left(obj);
+        case LV_DIR_RIGHT: return lv_obj_get_scroll_right(obj);
+        case LV_DIR_TOP: return lv_obj_get_scroll_top(obj);
+        case LV_DIR_BOTTOM: return lv_obj_get_scroll_bottom(obj);
+        default: return 0;
+    }
+}
+
+EMSCRIPTEN_KEEPALIVE void gallery_wheel(int x, int y, int dx, int dy) {
+    if (!pointer || pressed || (!dx && !dy)) return;
+    lv_display_t *display = lv_indev_get_display(pointer);
+    lv_obj_t *layers[] = {
+        lv_display_get_layer_sys(display), lv_display_get_layer_top(display),
+        lv_display_get_screen_active(display), lv_display_get_layer_bottom(display),
+    };
+    const bool horizontal = LV_ABS(dx) > LV_ABS(dy);
+    const int delta = horizontal ? dx : dy;
+    const lv_dir_t dir = horizontal ? (delta < 0 ? LV_DIR_LEFT : LV_DIR_RIGHT)
+                                    : (delta < 0 ? LV_DIR_TOP : LV_DIR_BOTTOM);
+    const lv_obj_flag_t chain = horizontal ? LV_OBJ_FLAG_SCROLL_CHAIN_HOR : LV_OBJ_FLAG_SCROLL_CHAIN_VER;
+    lv_point_t at = { x, y };
+    lv_obj_t *hit = NULL;
+    for (size_t i = 0; i < sizeof(layers) / sizeof(layers[0]) && !hit; i++) {
+        lv_obj_update_layout(layers[i]);
+        hit = lv_indev_search_obj(layers[i], &at);
+    }
+
+    for (lv_obj_t *obj = hit; obj; obj = lv_obj_get_parent(obj)) {
+        int32_t room = 0;
+        if (lv_obj_has_flag(obj, LV_OBJ_FLAG_SCROLLABLE) && (lv_obj_get_scroll_dir(obj) & dir)) {
+            room = wheel_room(obj, dir);
+        }
+        if (room > 0) {
+            if (obj != wheel_target) {
+                if (wheel_target) {
+                    // Scroll-end callbacks can change the layout or delete objects.
+                    finish_wheel(wheel_timer);
+                    gallery_wheel(x, y, dx, dy);
+                    return;
+                }
+                wheel_target = obj;
+                lv_obj_add_event_cb(obj, wheel_target_deleted, LV_EVENT_DELETE, NULL);
+                lv_obj_stop_scroll_anim(obj);
+                if (!wheel_target || lv_obj_send_event(obj, LV_EVENT_SCROLL_BEGIN, NULL) != LV_RESULT_OK) return;
+            }
+            if (!wheel_timer) wheel_timer = lv_timer_create(finish_wheel, 200, NULL);
+            lv_timer_reset(wheel_timer);
+            lv_timer_resume(wheel_timer);
+            const int32_t offset = delta < 0 ? LV_MIN(room, -delta) : -LV_MIN(room, delta);
+            lv_obj_scroll_by_raw(obj, horizontal ? offset : 0, horizontal ? 0 : offset);
+            return;
+        }
+        if (!lv_obj_has_flag(obj, chain)) break;
+    }
 }
 
 EM_JS(void, browser_panic, (const char *file, size_t length, unsigned line), {

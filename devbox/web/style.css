@@ -1,1 +1,5 @@
 @import 'tailwindcss' source(none);
+
+@import '@claralight-design/react/styles.css';
+
+:root { color-scheme: normal; }

@@ -4,11 +4,13 @@ export const MIN_ZOOM = 5;
 export const MAX_ZOOM = 6400;
 const ZOOM_STEP = 1.2;
 const BASE_SCALE = 0.5;
+const WHEEL_IDLE_MS = 200;
+const BACK_DISTANCE = 48;
 
 type Point = { x: number; y: number };
-type Viewport = Point & { percent: number };
+type Viewport = Point & { percent: number; showZoomFeedback: boolean };
 type GestureEvent = MouseEvent & { scale: number };
-const home: Viewport = { x: 0, y: 0, percent: 100 };
+const home: Viewport = { x: 0, y: 0, percent: 100, showZoomFeedback: false };
 
 export function useCanvasViewport(
   stage: RefObject<HTMLDivElement | null>,
@@ -23,12 +25,12 @@ export function useCanvasViewport(
   const pan = useRef<{ pointerId: number; at: Point; capture: Element }>(undefined);
   const gesture = useRef<number>(undefined);
 
-  function zoom(update: (percent: number) => number, anchor: Point = { x: 0, y: 0 }) {
+  function zoom(update: (percent: number) => number, anchor: Point = { x: 0, y: 0 }, showZoomFeedback = true) {
     setViewport((current) => {
       const percent = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, update(current.percent)));
       if (percent === current.percent) return current;
       const factor = percent / current.percent;
-      return { percent, x: anchor.x + (current.x - anchor.x) * factor, y: anchor.y + (current.y - anchor.y) * factor };
+      return { percent, showZoomFeedback, x: anchor.x + (current.x - anchor.x) * factor, y: anchor.y + (current.y - anchor.y) * factor };
     });
   }
 
@@ -36,8 +38,27 @@ export function useCanvasViewport(
     setViewport((current) => ({ ...current, x: current.x + dx, y: current.y + dy }));
   }
 
-  function reset() {
-    setViewport(home);
+  function zoomIn(showZoomFeedback: boolean) {
+    zoom((percent) => percent * ZOOM_STEP, undefined, showZoomFeedback);
+  }
+
+  function zoomOut(showZoomFeedback: boolean) {
+    zoom((percent) => percent / ZOOM_STEP, undefined, showZoomFeedback);
+  }
+
+  function reset(showZoomFeedback: boolean) {
+    setViewport({ ...home, showZoomFeedback });
+  }
+
+  function fit(width: number, height: number) {
+    const area = stage.current;
+    if (!area) return;
+    const padding = getComputedStyle(area);
+    const availableWidth = area.clientWidth - parseFloat(padding.paddingLeft) - parseFloat(padding.paddingRight);
+    const availableHeight = area.clientHeight - parseFloat(padding.paddingTop) - parseFloat(padding.paddingBottom);
+    if (availableWidth <= 0 || availableHeight <= 0 || height <= 0) return;
+    const percent = Math.min(availableWidth / width, availableHeight / height) / BASE_SCALE * 100;
+    setViewport({ ...home, percent: Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, Math.floor(percent * 10) / 10)) });
   }
 
   useEffect(() => {
@@ -47,6 +68,7 @@ export function useCanvasViewport(
     const frame = iframe?.contentWindow;
     const cleanups: (() => void)[] = [];
     let blockClick = false;
+    let frameWheel: { at: number; x: number; y: number; intent?: 'scroll' | 'back' | 'handled' } | undefined;
 
     function bind(target: EventTarget, event: string, handler: EventListener, options?: AddEventListenerOptions) {
       target.addEventListener(event, handler, options);
@@ -85,6 +107,7 @@ export function useCanvasViewport(
       setSpaceHeld(false);
       stopPan();
       gesture.current = undefined;
+      frameWheel = undefined;
     }
 
     function keyDown(event: KeyboardEvent) {
@@ -92,9 +115,9 @@ export function useCanvasViewport(
       const target = event.target as Element | null;
       if (target?.closest?.('input, textarea, select, [contenteditable]:not([contenteditable=false])')) return;
       if ((event.metaKey || event.ctrlKey) && !event.altKey) {
-        if (event.key === '0') reset();
-        else if (event.key === '+' || event.key === '=') zoom((percent) => percent * ZOOM_STEP);
-        else if (event.key === '-' || event.key === '_') zoom((percent) => percent / ZOOM_STEP);
+        if (event.key === '0') reset(true);
+        else if (event.key === '+' || event.key === '=') zoomIn(true);
+        else if (event.key === '-' || event.key === '_') zoomOut(true);
         else return;
         event.preventDefault();
       } else if (event.code === 'Space' && !event.altKey &&
@@ -108,6 +131,30 @@ export function useCanvasViewport(
       if (event.code === 'Space') setSpaceHeld(false);
     }
 
+    function handleFrameWheel(event: WheelEvent) {
+      // Trackpads report pixel deltas. With natural scrolling, a right swipe produces negative X.
+      if (event.deltaMode !== WheelEvent.DOM_DELTA_PIXEL) return;
+      if (!frameWheel || event.timeStamp - frameWheel.at > WHEEL_IDLE_MS) {
+        frameWheel = { at: event.timeStamp, x: 0, y: 0 };
+      }
+      frameWheel.at = event.timeStamp;
+      frameWheel.x -= event.deltaX;
+      frameWheel.y += Math.abs(event.deltaY);
+      const movingRight = frameWheel.x > frameWheel.y * 1.5;
+      if (!frameWheel.intent && Math.max(Math.abs(frameWheel.x), frameWheel.y) >= 8) {
+        frameWheel.intent = movingRight ? 'back' : 'scroll';
+      }
+      if (frameWheel.intent === 'scroll' || (!frameWheel.intent && !movingRight)) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      if (movingRight && frameWheel.x >= BACK_DISTANCE && frameWheel.intent === 'back') {
+        frameWheel.intent = 'handled';
+        // Use the preview's Escape handler, including when the iframe has not been clicked.
+        frame?.document.querySelector('canvas')?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      }
+    }
+
     function panPoint(event: PointerEvent, fromFrame: boolean) {
       // Screen coordinates stay stable as the iframe moves under a captured pointer.
       return fromFrame ? { x: event.screenX, y: event.screenY } : { x: event.clientX, y: event.clientY };
@@ -118,12 +165,22 @@ export function useCanvasViewport(
       bind(target, 'wheel', (raw) => {
         if (!preview.current) return;
         const event = raw as WheelEvent;
+        const zooming = event.ctrlKey || event.metaKey;
+        if (fromFrame && !zooming && gesture.current === undefined && !pan.current) {
+          handleFrameWheel(event);
+          return;
+        }
+        frameWheel = undefined;
         event.preventDefault();
-        if (gesture.current !== undefined || pan.current) return;
+        if (gesture.current !== undefined || pan.current) {
+          event.stopPropagation();
+          return;
+        }
         const units = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? canvasStage!.clientHeight : 1;
-        if (event.ctrlKey || event.metaKey) {
+        if (zooming) {
+          event.stopPropagation();
           zoom((percent) => percent * Math.exp(-event.deltaY * units * 0.01), anchor(event, fromFrame));
-        } else {
+        } else if (!(event.target as Element | null)?.closest('.debug-device-frame, .debug-area-surface')) {
           move(-event.deltaX * units, -event.deltaY * units);
         }
       }, options);
@@ -131,6 +188,7 @@ export function useCanvasViewport(
       bind(target, 'gesturestart', (event) => {
         if (!preview.current) return;
         event.preventDefault();
+        frameWheel = undefined;
         gesture.current = 1;
       }, options);
       bind(target, 'gesturechange', (raw) => {
@@ -203,7 +261,11 @@ export function useCanvasViewport(
   }, [stage, preview, frameReady, previewUrl]);
 
   return {
-    viewport, scale: viewport.percent / 100 * BASE_SCALE, space, dragging, reset,
-    setPercent: (percent: number) => zoom(() => percent),
+    viewport, scale: viewport.percent / 100 * BASE_SCALE, space, dragging,
+    fit,
+    reset: () => reset(false),
+    zoomIn: () => zoomIn(false),
+    zoomOut: () => zoomOut(false),
+    setPercent: (percent: number) => zoom(() => percent, undefined, false),
   };
 }

@@ -6,10 +6,10 @@ DevBox 从应用目录启动独立的浏览器调试器，从项目的正常启�
 
 DevBox 是可单独安装的 Cargo 子命令。从应用的目录执行，启动器会用 Cargo 解析到的 Aeris UI 版本，适用于 Git 依赖和本地路径依赖。网页运行文件和依赖安装在应用的 `target/aeris-devbox/` 下。
 
-首次安装命令。选择包含 DevBox 的 Aeris UI 修订，替换下面的 `<rev>`。
+首次安装时执行以下命令。
 
 ```sh
-cargo install --locked --git https://github.com/ClaralightDesign/Aeris-UI.git --rev <rev> cargo-aeris-devbox
+cargo install --locked --git https://github.com/ClaralightDesign/Aeris-UI.git cargo-aeris-devbox
 ```
 
 准备 Node.js 20.19+ 或 22.12+、pnpm、Make、Rust 的 `wasm32-unknown-emscripten` 目标、Emscripten 4.0.20 和 LVGL 9.4.0 源码。激活 Emscripten 环境后，在应用目录运行：
@@ -24,7 +24,9 @@ cargo aeris-devbox
 
 ## 预览画布
 
-100% 时，336 × 480 的设备画面显示为 168 × 240 CSS 像素。缩放菜单支持输入到 0.1%。触控板捏合可连续缩放，双指滑动可平移。用 ⌘/Ctrl 加 `+` 或 `-` 调整缩放，按 ⌘/Ctrl 加 `0` 恢复到 100% 并居中。
+100% 时，336 × 480 的设备画面显示为 168 × 240 CSS 像素。鼠标位于设备画面内时，滚轮和触控板滚动会作用于画面内的控件；触控板双指从左向右滑动会触发应用返回（与 Escape 相同）。在画面外的空白处滚动可平移外层画布。
+
+缩放菜单支持输入到 0.1%。触控板捏合可连续缩放。用 ⌘/Ctrl 加 `+` 或 `-` 调整缩放，按 ⌘/Ctrl 加 `0` 恢复到 100% 并居中。
 
 可直接拖动预览区空白处，也可按住空格或鼠标中键从画面上拖动。截图和录屏仍使用设备像素。
 
@@ -48,7 +50,7 @@ cargo aeris-devbox
 }
 ```
 
-应用保留原有的 Aeris UI Git 依赖，将 `rev` 更新到支持 DevBox 的版本。在应用的 Cargo 特性表中加入：
+确认应用使用的 Aeris UI 支持 DevBox。在应用的 Cargo 特性表中加入：
 
 ```toml
 [features]

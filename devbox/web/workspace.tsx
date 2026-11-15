@@ -1,4 +1,5 @@
 import { Button, Popover } from '@heroui/react';
+import { NumberInput, ScrollArea } from '@claralight-design/react';
 import { ArrowClockwiseIcon } from '@phosphor-icons/react/dist/csr/ArrowClockwise';
 import { BroomIcon } from '@phosphor-icons/react/dist/csr/Broom';
 import { CameraPlusIcon } from '@phosphor-icons/react/dist/csr/CameraPlus';
@@ -21,6 +22,7 @@ import { Fragment, useEffect, useId, useLayoutEffect, useRef, useState, type CSS
 import { createPortal } from 'react-dom';
 import Scritto from '@scritto/react';
 import { Inspector } from './inspector';
+import { DevToolsTabs } from './devtools-tabs';
 import { BoxHighlight, ElementCard } from './element-overlay';
 import { Console, logLevel, type Log } from './console';
 import { Sources } from './sources';
@@ -76,14 +78,36 @@ type Project = {
 type Source = { name: string; text: string };
 type AgentAccess = 'cli' | 'mcp';
 type AgentSettings = Record<AgentAccess, boolean> & { cliSession?: string; mcpConfig?: object };
-function PreviewInfo({ project, scene, height, zoom, status }: {
+
+function PreviewDetails({ title, children }: { title: string; children: ReactNode }) {
+  return <details className="debug-preview-info">
+    <summary><span>{title}</span><CaretDownIcon size={12} aria-hidden="true" /></summary>
+    <ScrollArea orientation="vertical" edge="mask" scrollbars="hidden" radius="none"
+      className="debug-preview-info-scroll" viewportClassName="debug-preview-info-viewport"
+      contentClassName="debug-preview-info-body">
+      {children}
+    </ScrollArea>
+  </details>;
+}
+
+function PreviewInfoRows({ rows }: { rows: readonly (readonly [string, ReactNode])[] }) {
+  return <dl>{rows.map(([label, value], index) =>
+    <div key={`${label}-${index}`}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>;
+}
+
+function PreviewInfo({ project, scene, height, zoom, status, agentSettings }: {
   project?: Project;
   scene?: string;
   height: number;
   zoom: number;
   status: Status;
+  agentSettings?: AgentSettings;
 }) {
   const { app, tools, demo } = project ?? {};
+  const cliSession = agentSettings?.cli ? agentSettings.cliSession : undefined;
+  const mcpConfig = agentSettings?.mcp ? agentSettings.mcpConfig : undefined;
+  const displayedMcpConfig = mcpConfig && JSON.stringify(mcpConfig, (key, value) =>
+    key === 'Authorization' ? 'Bearer ••••••••' : value, 2);
   const dependencies = Object.entries({
     'canopus-runtime': 'Canopus Runtime', 'canopus-abi': 'Canopus ABI crate', 'aeris-ui': 'AerisUI',
   }).flatMap<readonly [string, ReactNode]>(([name, label]) => {
@@ -112,23 +136,31 @@ function PreviewInfo({ project, scene, height, zoom, status }: {
         ['构建状态', { ready: '就绪', building: '构建中', failed: '构建失败' }[status]] as const,
       ]),
     ] },
-    { title: '工具链', rows: [
-      ['DevBox', tools?.devbox ?? '—'],
-      ...dependencies,
-      ...(app?.abi ? [['应用 ABI 版本', app.abi] as const] : []),
-      ['渲染引擎', demo ? 'Canvas 2D' : `LVGL${tools?.lvgl ? ` ${tools.lvgl}` : ''}`],
-      ...(demo ? [] : [['运行目标', 'wasm32-unknown-emscripten'] as const, ['Emscripten', tools?.emscripten ?? '—'] as const]),
-    ] },
   ];
-  return <details className="debug-preview-info">
-    <summary><span>设备、应用与版本</span><CaretDownIcon size={12} aria-hidden="true" /></summary>
-    <div className="debug-preview-info-body">
+  const toolRows: (readonly [string, ReactNode])[] = [
+    ['DevBox', tools?.devbox ?? '—'],
+    ...dependencies,
+    ...(app?.abi ? [['应用 ABI 版本', app.abi] as const] : []),
+    ['渲染引擎', demo ? 'Canvas 2D' : `LVGL${tools?.lvgl ? ` ${tools.lvgl}` : ''}`],
+    ...(demo ? [] : [['运行目标', 'wasm32-unknown-emscripten'] as const, ['Emscripten', tools?.emscripten ?? '—'] as const]),
+  ];
+  return <>
+    <PreviewDetails title="设备、应用与版本">
       {groups.map(({ title, rows }) => <section key={title}>
         <h2>{title}</h2>
-        <dl>{rows.map(([label, value], index) => <div key={`${label}-${index}`}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
+        <PreviewInfoRows rows={rows} />
       </section>)}
-    </div>
-  </details>;
+    </PreviewDetails>
+    <PreviewDetails title="工具链">
+      <PreviewInfoRows rows={toolRows} />
+    </PreviewDetails>
+    {cliSession && <PreviewDetails title="Agent CLI 会话路径">
+      <pre className="debug-preview-connection">{cliSession}</pre>
+    </PreviewDetails>}
+    {displayedMcpConfig && <PreviewDetails title="MCP 配置">
+      <pre className="debug-preview-connection">{displayedMcpConfig}</pre>
+    </PreviewDetails>}
+  </>;
 }
 
 const agentOptions = [
@@ -143,6 +175,7 @@ const INSPECTOR_MIN = 278;
 const INSPECTOR_PULL = 14;
 const RULER_TICKS = Array.from({ length: Math.floor(width / RULER_STEP) + 1 }, (_, index) => index * RULER_STEP);
 const placements = ['left', 'right', 'bottom'] as const;
+const narrowInspectorQuery = '(max-width: 760px)';
 type Placement = typeof placements[number];
 const placementLabels: Record<Placement, string> = { left: '左侧', right: '右侧', bottom: '下侧' };
 
@@ -218,32 +251,23 @@ function CaptureModeButton({ mode, selected, onSelect, onHover }: {
 }
 
 function ZoomPercentInput({ percent, onChange }: { percent: number; onChange: (percent: number) => void }) {
-  const [draft, setDraft] = useState<string>();
-  const formatted = percent.toFixed(1);
-
-  function commit() {
-    if (draft?.trim()) {
-      const value = Number(draft);
-      if (Number.isFinite(value)) onChange(Math.round(value * 10) / 10);
-    }
-    setDraft(undefined);
+  const id = useId();
+  function apply(value: number | null) {
+    if (value !== null) onChange(Math.round(value * 10) / 10);
   }
-
-  return <Smooth radius={8}><label className="debug-zoom-value">
-    <input type="number" inputMode="decimal" min={MIN_ZOOM} max={MAX_ZOOM} step={0.1}
-      aria-label="缩放百分比" value={draft ?? formatted}
-      onChange={(event) => setDraft(event.target.value)} onBlur={commit}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter') {
-          event.preventDefault();
-          commit();
-        } else if (event.key === 'Escape' && draft !== undefined) {
-          event.stopPropagation();
-          setDraft(undefined);
-        }
-      }} />
-    <span aria-hidden="true">%</span>
-  </label></Smooth>;
+  return <div className="debug-zoom-field" onKeyDown={(event) => {
+    if (event.key === 'Enter' && event.target instanceof HTMLInputElement) {
+      event.preventDefault();
+      event.target.blur();
+    }
+  }}>
+    <label className="debug-sr-only" htmlFor={id}>缩放百分比</label>
+    <NumberInput id={id} value={Math.round(percent * 10) / 10} min={MIN_ZOOM} max={MAX_ZOOM} step={1}
+      prefix={<span title="按住并左右拖动调整缩放" className="debug-zoom-scrub-label">缩放</span>}
+      suffix="%" format={{ maximumFractionDigits: 1 }}
+      onValueChange={(value, reason) => { if (reason === 'scrub') apply(value); }}
+      onValueCommitted={apply} onCancel={apply} />
+  </div>;
 }
 
 function Hint({ label, keys, children, hidden }: { label: string; keys?: ReactNode; children: ReactNode; hidden?: boolean }) {
@@ -374,10 +398,12 @@ export function Component() {
   const [hoverId, hover] = useState<number>();
   const [measure, setMeasure] = useState<{ x: number; y: number }>();
   const [frameReady, setFrameReady] = useState(0);
-  const [placement, setPlacement] = useState<Placement>(() => {
+  const [preferredPlacement, setPlacement] = useState<Placement>(() => {
     const saved = localStorage.getItem('aeris-debug-inspector-placement');
     return saved === 'left' || saved === 'bottom' ? saved : 'right';
   });
+  const [narrowInspector, setNarrowInspector] = useState(() => matchMedia(narrowInspectorQuery).matches);
+  const placement = narrowInspector ? 'bottom' : preferredPlacement;
   const [inspectorWidth, setInspectorWidth] = useState(initialInspectorWidth);
   const [resizing, setResizing] = useState(false);
   const [dockOpen, setDockOpen] = useState(false);
@@ -404,12 +430,9 @@ export function Component() {
   const [savedLabel, setSavedLabel] = useState('');
   const [exportProgress, setExportProgress] = useState(0);
   const [captureNotice, setCaptureNotice] = useState('');
-  const [indicator, setIndicator] = useState({ left: 0, width: 0 });
-  const [indicatorReady, setIndicatorReady] = useState(false);
   const restored = useRef(true);
   const copyTimer = useRef<number>(undefined);
   const statusRef = useRef<HTMLDivElement>(null);
-  const tabList = useRef<HTMLDivElement>(null);
   const session = useRef<RecordingSession | undefined>(undefined);
   const areaStart = useRef<{ x: number; y: number } | undefined>(undefined);
   const pointer = useRef<{ x: number; y: number } | undefined>(undefined);
@@ -468,17 +491,22 @@ export function Component() {
 
   const previewParams = new URLSearchParams({ scene: scene?.id ?? '', debug: '1', revision: String(generation) });
   const previewUrl = '/preview.html?' + previewParams;
-  const { viewport, scale, space, dragging, reset, setPercent } = useCanvasViewport(stage, preview, frameReady, previewUrl);
+  const { viewport, scale, space, dragging, reset, fit, zoomIn, zoomOut, setPercent } = useCanvasViewport(stage, preview, frameReady, previewUrl);
   const zoomLabel = `${viewport.percent.toFixed(1)}%`;
   const previousZoom = useRef(viewport.percent);
   const [zoomExpanded, setZoomExpanded] = useState(false);
   useEffect(() => {
-    if (viewport.percent === previousZoom.current) return;
+    const changed = viewport.percent !== previousZoom.current;
     previousZoom.current = viewport.percent;
+    if (zoomOpen || !viewport.showZoomFeedback) {
+      setZoomExpanded(false);
+      return;
+    }
+    if (!changed) return;
     setZoomExpanded(true);
     const timer = window.setTimeout(() => setZoomExpanded(false), 1500);
     return () => window.clearTimeout(timer);
-  }, [viewport.percent]);
+  }, [viewport.percent, viewport.showZoomFeedback, zoomOpen]);
   const renderer = () => (preview.current?.contentWindow as PreviewWindow | null)?.aerisDebugger;
   const selected = snapshot.nodes.find((node) => node.id === selectedId) ?? snapshot.nodes[0];
   const inspected = inspectorOpen && view === '元素' && !areaMode
@@ -502,13 +530,21 @@ export function Component() {
   }, [autoRefresh]);
 
   useEffect(() => {
+    const media = matchMedia(narrowInspectorQuery);
+    const update = () => setNarrowInspector(media.matches);
+    media.addEventListener('change', update);
+    update();
+    return () => media.removeEventListener('change', update);
+  }, []);
+
+  useEffect(() => {
     if (restored.current) {
       restored.current = false;
       return;
     }
-    localStorage.setItem('aeris-debug-inspector-placement', placement);
+    localStorage.setItem('aeris-debug-inspector-placement', preferredPlacement);
     localStorage.setItem('aeris-debug-inspector-width', String(inspectorWidth));
-  }, [placement, inspectorWidth]);
+  }, [preferredPlacement, inspectorWidth]);
 
   useEffect(() => {
     setSnapshot(EMPTY_SNAPSHOT);
@@ -1139,41 +1175,6 @@ export function Component() {
     return () => observer.disconnect();
   }, [status]);
 
-  useLayoutEffect(() => {
-    const list = tabList.current;
-    if (!list) return;
-    const update = () => {
-      const button = list.querySelector<HTMLButtonElement>('.debug-pill[data-active="true"]');
-      if (!button) return;
-      const listRect = list.getBoundingClientRect();
-      const buttonRect = button.getBoundingClientRect();
-      if (!buttonRect.width) return;
-      const left = buttonRect.left - listRect.left;
-      setIndicator({ left, width: buttonRect.width });
-      const scroller = list.parentElement;
-      if (!scroller || scroller.scrollWidth <= scroller.clientWidth) return;
-      const right = left + buttonRect.width;
-      if (left < scroller.scrollLeft) scroller.scrollTo({ left: Math.max(0, left - 12), behavior: 'smooth' });
-      else if (right > scroller.scrollLeft + scroller.clientWidth) {
-        scroller.scrollTo({ left: right - scroller.clientWidth + 12, behavior: 'smooth' });
-      }
-    };
-    update();
-    const frame = window.requestAnimationFrame(update);
-    const observer = new ResizeObserver(update);
-    observer.observe(list);
-    return () => {
-      window.cancelAnimationFrame(frame);
-      observer.disconnect();
-    };
-  }, [view, errorCount]);
-
-  useEffect(() => {
-    if (indicatorReady) return;
-    const timer = window.setTimeout(() => setIndicatorReady(true), 80);
-    return () => window.clearTimeout(timer);
-  }, [indicatorReady]);
-
   const apple = /Mac|iPhone|iPad|iPod/.test(navigator.userAgent);
   const shownCapture = captureHover ?? captureMode;
   const captureTitle = captureModes[shownCapture].title;
@@ -1220,16 +1221,28 @@ export function Component() {
                 <MagnifyingGlassPlusIcon size={18} aria-hidden="true" />
                 <span className="debug-zoom-trigger-value" aria-hidden="true"><Scritto value={zoomLabel} /></span>
               </Button></Smooth>
-              <Popover.Content className="debug-popover-wrap"><Smooth radius={20} stroke={popoverStroke}><Popover.Dialog aria-label="缩放" className="debug-popover">
-                <span className="debug-section-title">缩放</span>
+              <Popover.Content className="debug-popover-wrap"><Smooth radius={20} stroke={popoverStroke}><Popover.Dialog aria-label="缩放" className="debug-popover debug-zoom-menu">
                 <ZoomPercentInput percent={viewport.percent} onChange={setPercent} />
-                <div className="debug-zoom-presets">
-                  {[75, 100, 150, 200].map((percent) => <Smooth key={percent} radius={8}>
-                    <Button variant="ghost" className="debug-menu-item"
-                      aria-pressed={viewport.percent === percent} onPress={() => setPercent(percent)}>{percent}%</Button>
+                <div className="debug-zoom-actions">
+                  {[
+                    { label: '放大', key: '+', action: zoomIn },
+                    { label: '缩小', key: '−', action: zoomOut },
+                    { label: '适应画布', action: () => fit(width, snapshot.height) },
+                    { label: '缩放至 50%', action: () => setPercent(50) },
+                    { label: '缩放至 100%', key: '0', action: reset },
+                    { label: '缩放至 200%', action: () => setPercent(200) },
+                  ].map(({ label, key, action }) => <Smooth key={label} radius={8}>
+                    <Button variant="ghost" className="debug-menu-item" onPress={() => { action(); setZoomOpen(false); }}>
+                      <span>{label}</span>{key && <span className="debug-zoom-shortcut" aria-hidden="true">{apple ? '⌘' : 'Ctrl '}{key}</span>}
+                    </Button>
                   </Smooth>)}
                 </div>
-                <Smooth radius={8}><Button variant="ghost" className="debug-menu-item" onPress={reset}>重置视图</Button></Smooth>
+                <div className="debug-zoom-actions">
+                  <Smooth radius={8}><Button variant="ghost" className="debug-menu-item" aria-pressed={ruler}
+                    onPress={() => setRuler(!ruler)}>
+                    <span>标尺</span><span className="debug-zoom-shortcut" aria-hidden="true">{apple ? '⌘' : 'Ctrl '}R</span>
+                  </Button></Smooth>
+                </div>
               </Popover.Dialog></Smooth></Popover.Content>
             </Popover>
           </Hint>
@@ -1396,7 +1409,8 @@ export function Component() {
                     })}
                   </div>
                   <footer className="debug-preview-footer">
-                    <PreviewInfo project={project} scene={scene?.title} height={snapshot.height} zoom={viewport.percent} status={status} />
+                    <PreviewInfo project={project} scene={scene?.title} height={snapshot.height} zoom={viewport.percent}
+                      status={status} agentSettings={agentSettings} />
                     <span className="debug-preview-notice" role="status">{notice}</span>
                   </footer>
                 </Popover.Dialog></Smooth>
@@ -1516,25 +1530,17 @@ export function Component() {
               setView('元素');
             }}><img className="debug-picker-asset" src={picker} alt="" /></Button></Smooth>
         </div>
-        <nav className="debug-main-tabs" aria-label="调试面板">
-          <div className="debug-main-tabs-inner" ref={tabList}>
-            <Smooth radius="capsule"><span className="debug-tab-indicator" aria-hidden="true" data-ready={indicatorReady}
-              style={{ transform: `translate(${indicator.left}px, -50%)`, width: indicator.width }} /></Smooth>
-            {views.map((name, index) => <span className="debug-main-tab" key={name}>
-              {index > 0 && <span className="debug-tab-divider" aria-hidden="true" />}
-              <Smooth radius="capsule"><Button variant="ghost" className="debug-pill" aria-pressed={view === name} data-active={view === name} onPress={() => openView(name)}>
-                {name}
-                {name === '控制台' && errorCount > 0 && <span className="debug-errors"><ProhibitInsetIcon size={14} aria-hidden="true" />{errorCount}</span>}
-              </Button></Smooth>
-            </span>)}
-          </div>
-        </nav>
+        <DevToolsTabs label="调试面板" tabs={views} value={view} onChange={openView}
+          extra={(name) => name === '控制台' && errorCount > 0 &&
+            <span className="debug-errors"><ProhibitInsetIcon size={14} aria-hidden="true" />{errorCount}</span>} />
         <div className="debug-toolbar-slot" data-end="true">
           <Popover isOpen={dockOpen} onOpenChange={setDockOpen}>
             <Smooth radius={6}><Button isIconOnly variant="ghost" className="debug-icon debug-picker" aria-label="检查器位置"><PlacementIcon placement={placement} /></Button></Smooth>
             <Popover.Content placement="bottom end" className="debug-popover-wrap"><Smooth radius={20} stroke={popoverStroke}><Popover.Dialog aria-label="检查器位置" className="debug-popover">
               <span className="debug-section-title">检查器位置</span>
+              {narrowInspector && <p className="debug-placement-notice">窄屏下仅支持下侧</p>}
               {placements.map((option) => <Button key={option} variant="ghost" className="debug-menu-item debug-placement"
+                isDisabled={narrowInspector && option !== 'bottom'}
                 aria-pressed={placement === option} onPress={() => { setPlacement(option); setDockOpen(false); }}>
                 <PlacementIcon placement={option} />{placementLabels[option]}
               </Button>)}

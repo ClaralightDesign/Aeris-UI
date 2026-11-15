@@ -5,6 +5,7 @@ import { BracketsAngleIcon } from '@phosphor-icons/react/dist/csr/BracketsAngle'
 import { BugBeetleIcon } from '@phosphor-icons/react/dist/csr/BugBeetle';
 import { AtIcon } from '@phosphor-icons/react/dist/csr/At';
 import { Button, Input } from '@heroui/react';
+import { DevToolsTabs } from './devtools-tabs';
 import { useLayoutEffect, useRef, useState } from 'react';
 import { Smooth } from './smooth';
 import { nodeClass, nodeName, type PreviewNode } from './preview';
@@ -118,9 +119,7 @@ export function Inspector({ nodes, selected, canvasSelection, onCanvasSelectionR
       </div></Smooth>
     </section>
     <section className="debug-details">
-      <div className="debug-detail-tabs" aria-label="对象详情">
-        {tabs.map((name) => <Smooth key={name} radius="capsule"><Button variant="ghost" className="debug-pill" aria-pressed={tab === name} onPress={() => setTab(name)}>{name}</Button></Smooth>)}
-      </div>
+      <DevToolsTabs label="对象详情" tabs={tabs} value={tab} onChange={setTab} />
       {selected && <>
         <Smooth radius={7}><div className="debug-detail-header">
           <EyeIcon size={16} aria-hidden="true" /> <span>{nodeName(selected)}</span>

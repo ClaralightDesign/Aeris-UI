@@ -13,7 +13,7 @@
     #viewport { width: min(336px, 100vw, 70svh); aspect-ratio: 336 / var(--crop-height, 480); overflow: hidden; }
     #viewport[hidden] { display: none; }
     canvas { display: block; width: 100%; height: auto; touch-action: none; }
-    html.embedded, html.embedded body { overflow: hidden; }
+    html.embedded, html.embedded body { overflow: hidden; overscroll-behavior: none; }
     html.embedded body { display: block; min-height: 0; background: #000; color: #fff; }
     html.embedded #viewport { width: 100%; }
     p { font: menu; }
@@ -87,6 +87,7 @@
         document.getElementById("error").hidden = false;
       },
       onRuntimeInitialized() {
+        let wheel = { time: -Infinity, x: 0, y: 0 };
         window.addEventListener("keydown", (event) => {
           if (event.key === "Escape" && !event.defaultPrevented) Module._devbox_back();
         });
@@ -113,6 +114,24 @@
             },
           };
         }
+        canvas.addEventListener("wheel", (event) => {
+          if (event.defaultPrevented || event.ctrlKey || event.metaKey) return;
+          event.preventDefault();
+          if (pointer !== null || !canvas.dataset.ready) return;
+          const mode = event.deltaMode;
+          const bounds = canvas.getBoundingClientRect();
+          const units = mode === WheelEvent.DOM_DELTA_LINE ? 16
+            : mode === WheelEvent.DOM_DELTA_PAGE ? cropHeight : canvas.height / bounds.height;
+          if (event.timeStamp - wheel.time > 200) wheel = { time: event.timeStamp, x: 0, y: 0 };
+          wheel.time = event.timeStamp;
+          wheel.x += Math.max(-canvas.width, Math.min(canvas.width, event.deltaX * units));
+          wheel.y += Math.max(-cropHeight, Math.min(cropHeight, event.deltaY * units));
+          const dx = Math.trunc(wheel.x);
+          const dy = Math.trunc(wheel.y);
+          wheel.x -= dx;
+          wheel.y -= dy;
+          if (dx || dy) Module._gallery_wheel(...point(event), dx, dy);
+        }, { passive: false });
         canvas.addEventListener("pointerdown", (event) => {
           if (pointer !== null || event.button !== 0) return;
           pointer = event.pointerId;
