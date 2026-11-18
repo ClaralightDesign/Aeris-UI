@@ -50,7 +50,7 @@ impl Theme {
 }
 
 /// 设备主题允许覆盖的语义色。
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 #[repr(usize)]
 pub enum Color {
     Background,

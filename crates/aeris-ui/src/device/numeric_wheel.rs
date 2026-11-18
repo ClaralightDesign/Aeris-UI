@@ -19,7 +19,11 @@ use super::{
 const NULL: Obj = core::ptr::null_mut();
 const WINDOW_HEIGHT: i32 = 158;
 const SCROLL_RANGE: i32 = 2 * CENTER;
-const DIGIT_PX: i32 = 58;
+fn digit_px() -> i32 {
+    super::display_profile()
+        .viewport
+        .apx(crate::Apx::from_halves(19))
+}
 const TRACK_Y: i32 = (WINDOW_HEIGHT - STEP) / 2 - STEP;
 const GREEN: u32 = 0x4CE045;
 const BORDER_COLOR: u32 = 49;
@@ -36,6 +40,13 @@ pub struct Column {
     pub initial: u8,
     pub label: &'static [u8],
     pub badge_width: i32,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum NumericWheelStyle {
+    #[default]
+    WithUnit,
+    NumberOnly,
 }
 
 pub struct NumericWheel<const N: usize> {
@@ -91,11 +102,19 @@ impl Row {
                 if label.is_null() {
                     return None;
                 }
+                let base = Font::Demibold32.base_px();
+                lv::text_px(label, width, 32, 2, Font::Demibold32, base);
+                lv::inspect_text_apx(
+                    label,
+                    super::display_profile().viewport,
+                    crate::Apx::from_halves(19),
+                );
+                let scale = ((digit_px() * 256 + base / 2) / base) as u32;
                 for (property, value) in [
                     (lv::TRANSFORM_PIVOT_X, width as u32 / 2),
                     (lv::TRANSFORM_PIVOT_Y, 16),
-                    (lv::TRANSFORM_SCALE_X, (DIGIT_PX * 8) as u32),
-                    (lv::TRANSFORM_SCALE_Y, (DIGIT_PX * 8) as u32),
+                    (lv::TRANSFORM_SCALE_X, scale),
+                    (lv::TRANSFORM_SCALE_Y, scale),
                 ] {
                     lv::style(label, property, value);
                 }
@@ -116,7 +135,7 @@ impl Row {
             unsafe {
                 if !self.label.is_null() {
                     lvx_label_set_text(self.label, text.as_ptr());
-                } else if let Some(layout) = DetailLayout::sized(&text[..2], DIGIT_PX) {
+                } else if let Some(layout) = DetailLayout::sized(&text[..2], digit_px()) {
                     for ((image, glyph), place) in self
                         .digits
                         .into_iter()
@@ -147,18 +166,36 @@ impl Wheel {
         parent: Obj,
         area: Rect,
         spec: Column,
+        style: NumericWheelStyle,
         callback: LvxEventCallback,
     ) -> Option<Self> {
         let Rect { x, y, w: width, .. } = area;
-        let window_y = y + HEIGHT - WINDOW_HEIGHT;
+        let window_y = y + match style {
+            NumericWheelStyle::WithUnit => HEIGHT - WINDOW_HEIGHT,
+            NumericWheelStyle::NumberOnly => (HEIGHT - WINDOW_HEIGHT) / 2,
+        };
         unsafe {
-            let badge_width = spec.badge_width.clamp(1, width);
-            let badge = lv::background(parent, badge_width, 36, GREEN, 10);
-            if !badge.is_null() {
-                lvx_object_align(badge, 1, x + (width - badge_width) / 2, y);
-                lvx_object_clear_flag(badge, lv::CLICKABLE | lv::SCROLLABLE);
-                lv::label(badge, spec.label, 0, 2, badge_width, 32, 0, Font::Medium24);
-            }
+            let badge = if style == NumericWheelStyle::WithUnit {
+                let width_of_badge = spec.badge_width.clamp(1, width);
+                let badge = lv::background(parent, width_of_badge, 36, GREEN, 10);
+                if !badge.is_null() {
+                    lvx_object_align(badge, 1, x + (width - width_of_badge) / 2, y);
+                    lvx_object_clear_flag(badge, lv::CLICKABLE | lv::SCROLLABLE);
+                    lv::label(
+                        badge,
+                        spec.label,
+                        0,
+                        2,
+                        width_of_badge,
+                        32,
+                        0,
+                        Font::Medium24,
+                    );
+                }
+                badge
+            } else {
+                NULL
+            };
             let viewport = font::clip(parent, width, WINDOW_HEIGHT, 22)?;
             lvx_object_align(viewport, 1, x, window_y);
             lv::style(viewport, LV_STYLE_CLIP_CORNER, 1);
@@ -247,6 +284,7 @@ impl Wheel {
 
 impl<const N: usize> NumericWheel<N> {
     /// 回调将收到的事件转交给同一实例；父对象须在实例使用期间有效。
+    #[deprecated(note = "Use NumericWheel::mount_with_styles")]
     pub unsafe fn mount(
         parent: Obj,
         bounds: Rect,
@@ -254,11 +292,33 @@ impl<const N: usize> NumericWheel<N> {
         active: usize,
         callback: LvxEventCallback,
     ) -> Option<Self> {
+        unsafe {
+            Self::mount_with_styles(
+                parent,
+                bounds,
+                specs,
+                [NumericWheelStyle::WithUnit; N],
+                active,
+                callback,
+            )
+        }
+    }
+
+    pub unsafe fn mount_with_styles(
+        parent: Obj,
+        bounds: Rect,
+        specs: [Column; N],
+        styles: [NumericWheelStyle; N],
+        active: usize,
+        callback: LvxEventCallback,
+    ) -> Option<Self> {
         let areas = columns::<N>(Rect::new(0, 0, bounds.w, bounds.h))?;
         if active >= N
-            || specs
-                .iter()
-                .any(|spec| spec.min > spec.max || spec.max > 99 || spec.label.last() != Some(&0))
+            || specs.iter().zip(styles).any(|(spec, style)| {
+                spec.min > spec.max
+                    || spec.max > 99
+                    || (style == NumericWheelStyle::WithUnit && spec.label.last() != Some(&0))
+            })
         {
             return None;
         }
@@ -266,8 +326,8 @@ impl<const N: usize> NumericWheel<N> {
         unsafe { lv::inspect_name(root, c"AerisUI.NumericWheel") };
         unsafe { lvx_object_align(root, 1, bounds.x, bounds.y) };
         let mut wheels: [Option<Wheel>; N] = core::array::from_fn(|_| None);
-        for (index, (area, spec)) in areas.into_iter().zip(specs).enumerate() {
-            let Some(wheel) = (unsafe { Wheel::create(root, area, spec, callback) }) else {
+        for (index, ((area, spec), style)) in areas.into_iter().zip(specs).zip(styles).enumerate() {
+            let Some(wheel) = (unsafe { Wheel::create(root, area, spec, style, callback) }) else {
                 unsafe { lvx_object_delete(root) };
                 return None;
             };
@@ -340,7 +400,14 @@ impl<const N: usize> NumericWheel<N> {
         self.resetting.set(true);
         wheel.settling.set(false);
         let position = centered_position(value, wheel.spec.min, wheel.spec.max);
-        unsafe { generated_symbols::raw_lv_obj_scroll_to(wheel.scroll, 0, position, 0) };
+        #[cfg(all(feature = "band-11", not(target_arch = "wasm32")))]
+        unsafe {
+            lvx_object_scroll_to_y(wheel.scroll, position, 0)
+        };
+        #[cfg(any(not(feature = "band-11"), target_arch = "wasm32"))]
+        unsafe {
+            generated_symbols::raw_lv_obj_scroll_to(wheel.scroll, 0, position, 0)
+        };
         self.resetting.set(false);
         wheel.paint(wheel.position());
     }

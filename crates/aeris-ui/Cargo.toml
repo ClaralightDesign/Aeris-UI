@@ -18,13 +18,25 @@ band-10-pro = [
     "dep:rolling-digits",
     "canopus-target-private/target-xiaomi-band-10-pro-3-101-043",
 ]
+band-11 = [
+    "dep:canopus-abi",
+    "dep:canopus-runtime",
+    "dep:canopus-target-private",
+    "dep:canopus-target-generated",
+    "dep:rolling-digits",
+    "canopus-target-private/target-xiaomi-band-11-4-100-155",
+]
 gallery = ["band-10-pro"]
 devbox = ["dep:rolling-digits"]
 
 [dependencies]
 rolling-digits = { path = "../rolling-digits", optional = true }
 
+[build-dependencies]
+serde_json = "1"
+
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 canopus-abi = { git = "https://github.com/AstralSightStudios/Canopus.git", rev = "f196b200823f47780c73ae48c4c62da8fe5311df", optional = true }
 canopus-runtime = { git = "https://github.com/AstralSightStudios/Canopus.git", rev = "f196b200823f47780c73ae48c4c62da8fe5311df", optional = true }
 canopus-target-private = { git = "https://github.com/AstralSightStudios/Canopus.git", rev = "f196b200823f47780c73ae48c4c62da8fe5311df", optional = true, default-features = false }
+canopus-target-generated = { git = "https://github.com/AstralSightStudios/Canopus.git", rev = "f196b200823f47780c73ae48c4c62da8fe5311df", optional = true, default-features = false }

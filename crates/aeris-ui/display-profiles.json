@@ -1,0 +1,47 @@
+[
+  {
+    "id": "xiaomi-band-10-pro-3.101.043",
+    "name": "小米手环 10 Pro",
+    "width": 336,
+    "height": 480,
+    "shape": "rectangle",
+    "safe": [0, 0, 336, 480],
+    "apx4": 25
+  },
+  {
+    "id": "xiaomi-band-11-4.100.155",
+    "name": "小米手环 11",
+    "width": 212,
+    "height": 520,
+    "shape": "capsule",
+    "safe": [12, 64, 188, 392],
+    "apx4": 22
+  },
+  {
+    "id": "redmi-watch",
+    "name": "Redmi Watch",
+    "width": 432,
+    "height": 514,
+    "shape": "rectangle",
+    "safe": [22, 22, 388, 470],
+    "apx4": 30
+  },
+  {
+    "id": "round-390",
+    "name": "圆屏模拟",
+    "width": 390,
+    "height": 390,
+    "shape": "circle",
+    "safe": [60, 60, 270, 270],
+    "apx4": 25
+  },
+  {
+    "id": "square-480",
+    "name": "方屏模拟",
+    "width": 480,
+    "height": 480,
+    "shape": "rectangle",
+    "safe": [12, 12, 456, 456],
+    "apx4": 30
+  }
+]

@@ -16,7 +16,6 @@ pub const MAX_STEPS: u8 = 10;
 const BUTTON_WIDTH: i32 = 70;
 const ICON_SIZE: i32 = 40;
 const TRACK_INSET: i32 = 14;
-const TRACK_WIDTH: i32 = WIDTH - 2 * (BUTTON_WIDTH + TRACK_INSET);
 const TRACK_HEIGHT: i32 = 10;
 const TRACK_Y: i32 = (HEIGHT - TRACK_HEIGHT) / 2;
 const TRACK_DIVIDER: u32 = 0x3E3E3E;
@@ -35,6 +34,7 @@ pub struct SteppedSlider {
     plus: Obj,
     steps: u8,
     level: u8,
+    track_width: i32,
     fill_width: i32,
     transition: Option<(i32, u32)>,
 }
@@ -49,17 +49,39 @@ impl SteppedSlider {
         initial: u8,
         on_input: LvxEventCallback,
     ) -> Option<Self> {
-        if !(1..=MAX_STEPS).contains(&steps) || parent.is_null() {
+        unsafe { Self::create_in(parent, crate::geometry::Rect::new(x, y, WIDTH, HEIGHT), steps, initial, on_input) }
+    }
+
+    /// Creates a stepped slider at the assigned width and standard row height.
+    pub unsafe fn create_in(
+        parent: Obj,
+        area: crate::geometry::Rect,
+        steps: u8,
+        initial: u8,
+        on_input: LvxEventCallback,
+    ) -> Option<Self> {
+        let track_width = area.w - 2 * (BUTTON_WIDTH + TRACK_INSET);
+        if !(1..=MAX_STEPS).contains(&steps) || parent.is_null()
+            || track_width < i32::from(steps) * 2 || area.h < HEIGHT {
             return None;
         }
         unsafe {
-            let root = lv::image(parent, assets::CARD_FACE, x, y);
+            let root = if area.w == WIDTH {
+                lv::image(parent, assets::CARD_FACE, area.x, area.y)
+            } else {
+                let root = lv::background(parent, area.w, HEIGHT, Color::PrimaryText.resolve(), 32);
+                if !root.is_null() {
+                    lvx_object_align(root, 1, area.x, area.y);
+                    lv::style(root, lv::BG_OPA, 31);
+                }
+                root
+            };
             if root.is_null() {
                 return None;
             }
             lv::inspect_name(root, c"AerisUI.SteppedSlider");
             lvx_object_clear_flag(root, lv::CLICKABLE | lv::SCROLLABLE);
-            let slider = Self::mount(root, steps, initial.min(steps), on_input);
+            let slider = Self::mount(root, area.w, track_width, steps, initial.min(steps), on_input);
             if slider.is_none() {
                 lvx_object_delete(root);
             }
@@ -67,12 +89,12 @@ impl SteppedSlider {
         }
     }
 
-    unsafe fn mount(root: Obj, steps: u8, level: u8, on_input: LvxEventCallback) -> Option<Self> {
+    unsafe fn mount(root: Obj, width: i32, track_width: i32, steps: u8, level: u8, on_input: LvxEventCallback) -> Option<Self> {
         unsafe {
             let divider = Color::Background.resolve();
             let buttons = [
                 (0, assets::SLIDER_MINUS, DECREASE),
-                (WIDTH - BUTTON_WIDTH, assets::SLIDER_PLUS, INCREASE),
+                (width - BUTTON_WIDTH, assets::SLIDER_PLUS, INCREASE),
             ];
             let mut icons = [core::ptr::null_mut(); 2];
             for (x, art, action) in buttons {
@@ -94,11 +116,11 @@ impl SteppedSlider {
                 icons[action] = icon;
                 lv::bind(hit, on_input, action);
             }
-            for x in [BUTTON_WIDTH - 1, WIDTH - BUTTON_WIDTH - 1] {
+            for x in [BUTTON_WIDTH - 1, width - BUTTON_WIDTH - 1] {
                 surface(root, x, 0, 2, HEIGHT, divider, 0)?;
             }
 
-            let center = cards::container(root, BUTTON_WIDTH, 0, WIDTH - 2 * BUTTON_WIDTH, HEIGHT);
+            let center = cards::container(root, BUTTON_WIDTH, 0, width - 2 * BUTTON_WIDTH, HEIGHT);
             if center.is_null() {
                 return None;
             }
@@ -107,7 +129,7 @@ impl SteppedSlider {
                 center,
                 TRACK_INSET,
                 TRACK_Y,
-                TRACK_WIDTH,
+                track_width,
                 TRACK_HEIGHT,
                 Color::SecondaryText.resolve(),
                 radius,
@@ -122,14 +144,14 @@ impl SteppedSlider {
                 fill_clip,
                 0,
                 0,
-                TRACK_WIDTH,
+                track_width,
                 TRACK_HEIGHT,
                 Color::Accent.resolve(),
                 radius,
             )?;
             lvx_set_hidden(fill_clip, 1);
             for step in 1..steps {
-                let x = TRACK_WIDTH * i32::from(step) / i32::from(steps);
+                let x = track_width * i32::from(step) / i32::from(steps);
                 surface(track, x - 1, 0, 2, TRACK_HEIGHT, TRACK_DIVIDER, 0)?;
             }
             lvx_object_clear_flag(center, lv::SCROLL_CHAIN | lv::GESTURE_BUBBLE);
@@ -145,6 +167,7 @@ impl SteppedSlider {
                 plus,
                 steps,
                 level,
+                track_width,
                 fill_width: 0,
                 transition: None,
             };
@@ -181,8 +204,8 @@ impl SteppedSlider {
             TRACK => {
                 let [x, _] = lv::touch_point(event)?;
                 let [left, ..] = unsafe { lvx_object_coords(self.center) };
-                let offset = (x - left - TRACK_INSET).clamp(0, TRACK_WIDTH);
-                let level = (offset * i32::from(self.steps) + TRACK_WIDTH / 2) / TRACK_WIDTH;
+                let offset = (x - left - TRACK_INSET).clamp(0, self.track_width);
+                let level = (offset * i32::from(self.steps) + self.track_width / 2) / self.track_width;
                 self.set_level(level as u8)
             }
             _ => None,
@@ -223,7 +246,7 @@ impl SteppedSlider {
     }
 
     fn target_width(&self) -> i32 {
-        TRACK_WIDTH * i32::from(self.level) / i32::from(self.steps)
+        self.track_width * i32::from(self.level) / i32::from(self.steps)
     }
 
     fn paint_fill(&mut self, width: i32) {

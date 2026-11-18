@@ -1,6 +1,9 @@
 //! 分页指示点的尺寸与居中布局。
 
-use crate::geometry::Rect;
+use crate::{
+    geometry::{DisplayProfile, Rect, Viewport},
+    Apx,
+};
 
 pub const INDICATOR_WIDTH: i32 = 336;
 pub const INDICATOR_HEIGHT: i32 = 94;
@@ -8,6 +11,65 @@ pub const INDICATOR_INACTIVE_SIZE: i32 = 10;
 pub const INDICATOR_ACTIVE_SIZE: i32 = 14;
 pub const INDICATOR_GAP: i32 = 10;
 pub const MAX_DOTS: usize = 8;
+
+#[derive(Clone, Copy, Debug)]
+pub struct FooterLayout {
+    pub background: Rect,
+    pub dots: Rect,
+    pub curved: bool,
+    pub content_inset: i32,
+}
+
+impl FooterLayout {
+    pub fn new(viewport: Viewport) -> Self {
+        let screen = viewport.bounds();
+        let safe = viewport.content();
+        let curved = viewport == DisplayProfile::BAND_11.viewport;
+        let height = if curved { 100 } else { INDICATOR_HEIGHT };
+        let offset = viewport.apx(Apx::new(if curved { 4 } else { 2 }));
+        let background = Rect::new(0, screen.h - height + offset, screen.w, height);
+        let dots = if curved {
+            Rect::new(0, screen.h - 100, screen.w, 100)
+        } else {
+            Rect::new(safe.x, safe.bottom() - viewport.apx(Apx::new(3)), safe.w, 0)
+        };
+        Self {
+            background,
+            dots,
+            curved,
+            content_inset: screen.h - background.y,
+        }
+    }
+}
+
+/// Curved, moving five-dot window from the Band 11 footer (212 × 100).
+/// `position` is the continuous page offset, in thousandths of a page.
+/// Coordinates stay in half pixels until the final dot bounds are resolved.
+pub fn capsule_dot(frame: Rect, index: usize, position: i32) -> Option<(Rect, u32, u8)> {
+    let distance = index as i64 * 1000 - i64::from(position);
+    let amount = distance.abs();
+    if amount > 2000 {
+        return None;
+    }
+    let segment = (amount / 1000).min(1) as usize;
+    let progress = (amount - segment as i64 * 1000) as i32;
+    let interpolate = |values: [i32; 3]| {
+        values[segment] + (values[segment + 1] - values[segment]) * progress / 1000
+    };
+    let offset = interpolate([0, 40, 75]) * distance.signum() as i32;
+    let y = interpolate([179, 173, 166]);
+    let size = interpolate([11_000, 9_000, 6_000]);
+    let diameter = (size + 500) / 1000;
+    let half_pixel = |value: i32| (value + 1).div_euclid(2);
+    let dot = Rect::new(
+        frame.center_x() + half_pixel(offset - diameter),
+        frame.y + half_pixel(y - diameter),
+        diameter,
+        diameter,
+    );
+    let opacity = interpolate([255, 102, 102]) as u8;
+    Some((dot, 0xFFFFFF, opacity))
+}
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct PageIndicatorState {
@@ -74,6 +136,46 @@ pub(crate) fn dots_left(frame: Rect, sizes: &[i32]) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn footer_content_insets_follow_the_visible_gradient_bounds() {
+        let pro = FooterLayout::new(DisplayProfile::BAND_10_PRO.viewport);
+        assert_eq!(pro.background, Rect::new(0, 399, 336, 94));
+        assert_eq!(pro.dots.center_y(), 461);
+        assert_eq!(pro.content_inset, 81);
+        let band = FooterLayout::new(DisplayProfile::BAND_11.viewport);
+        assert_eq!(band.background, Rect::new(0, 442, 212, 100));
+        assert_eq!(band.content_inset, 78);
+    }
+
+    #[test]
+    fn capsule_footer_matches_the_five_svg_circles() {
+        let frame = Rect::new(0, 420, 212, 100);
+        let expected = [
+            (Rect::new(66, 500, 6, 6), 0xFFFFFF, 102),
+            (Rect::new(82, 502, 9, 9), 0xFFFFFF, 102),
+            (Rect::new(101, 504, 11, 11), 0xFFFFFF, 255),
+            (Rect::new(122, 502, 9, 9), 0xFFFFFF, 102),
+            (Rect::new(141, 500, 6, 6), 0xFFFFFF, 102),
+        ];
+        for (index, expected) in expected.into_iter().enumerate() {
+            assert_eq!(capsule_dot(frame, index, 2000), Some(expected));
+        }
+        assert!(capsule_dot(frame, 5, 2000).is_none());
+    }
+
+    #[test]
+    fn capsule_window_moves_with_fractional_page_offsets() {
+        let frame = Rect::new(0, 420, 212, 100);
+        let (left, _, left_opacity) = capsule_dot(frame, 1, 1500).unwrap();
+        let (right, _, right_opacity) = capsule_dot(frame, 2, 1500).unwrap();
+        assert_eq!(left.w, right.w);
+        assert_eq!(left.y, right.y);
+        assert_eq!(left_opacity, right_opacity);
+        assert!(left.center_x() < frame.center_x());
+        assert!(right.center_x() > frame.center_x());
+        assert!(frame.contains(left) && frame.contains(right));
+    }
 
     #[test]
     fn two_dots_are_centred_with_a_ten_pixel_gap() {

@@ -5,7 +5,9 @@ use canopus_target_private::*;
 
 use super::{
     anim, assets,
-    cards::{container, text, text_font, LINE_HEIGHT, SECOND_LINE_Y, WIDTH},
+    cards::{
+        apply_dimming, container, text, text_font, CardOptions, LINE_HEIGHT, SECOND_LINE_Y, WIDTH,
+    },
     lv::{self, Font, Obj},
     progress_ring::Ring,
     rolling_number::RollingNumber,
@@ -16,7 +18,9 @@ const TIMER_BUTTON_Y: i32 = 14;
 const EVENT_SHORT_CLICKED: u32 = 4;
 const EVENT_LONG_PRESSED: u32 = 5;
 const NULL: Obj = core::ptr::null_mut();
-const COUNTDOWN_PX: i32 = 30;
+fn countdown_px() -> i32 {
+    crate::TextSize::Display.pixels(super::display_profile().viewport)
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum CardState {
@@ -44,6 +48,7 @@ pub struct CountdownCard {
 }
 
 impl CountdownCard {
+    #[deprecated(note = "Use CountdownCard::new_with_options and CardOptions")]
     pub unsafe fn new(
         parent: Obj,
         y: i32,
@@ -52,17 +57,43 @@ impl CountdownCard {
         actions: CardActions,
     ) -> Option<Self> {
         unsafe {
+            Self::new_with_options(
+                parent,
+                y,
+                initial,
+                subtitle,
+                actions,
+                CardOptions::default(),
+            )
+        }
+    }
+
+    pub unsafe fn new_with_options(
+        parent: Obj,
+        y: i32,
+        initial: [u8; 8],
+        subtitle: &str,
+        actions: CardActions,
+        options: CardOptions,
+    ) -> Option<Self> {
+        unsafe {
             let card = lv::card(parent, 4, y);
             if card.is_null() {
                 return None;
             }
             lv::inspect_name(card, c"AerisUI.CountdownCard");
+            apply_dimming(card, options.dimmed);
             let width = WIDTH - 123;
+            let title_y = if options.show_subtitle {
+                16
+            } else {
+                (lv::CARD_HEIGHT - LINE_HEIGHT) / 2
+            };
             let rolling_time = RollingNumber::fixed(
                 card,
-                crate::geometry::Rect::new(22, 16, width, LINE_HEIGHT),
+                crate::geometry::Rect::new(22, title_y, width, LINE_HEIGHT),
                 &initial,
-                COUNTDOWN_PX,
+                countdown_px(),
                 false,
             );
             let label = if rolling_time.is_none() {
@@ -71,28 +102,30 @@ impl CountdownCard {
                     card,
                     text,
                     22,
-                    16,
+                    title_y,
                     width,
                     LINE_HEIGHT,
                     Color::PrimaryText.resolve(),
-                    Font::Medium28,
-                    COUNTDOWN_PX,
+                    Font::Demibold32,
+                    countdown_px(),
                 )
             } else {
                 NULL
             };
-            let subtitle = text(
-                card,
-                subtitle,
-                22,
-                SECOND_LINE_Y,
-                width,
-                LINE_HEIGHT,
-                Color::SecondaryText.resolve(),
-                false,
-            );
-            if !subtitle.is_null() {
-                lvx_label_set_long_mode(subtitle, 1);
+            if options.show_subtitle {
+                let subtitle = text(
+                    card,
+                    subtitle,
+                    22,
+                    SECOND_LINE_Y,
+                    width,
+                    LINE_HEIGHT,
+                    Color::SecondaryText.resolve(),
+                    false,
+                );
+                if !subtitle.is_null() {
+                    lvx_label_set_long_mode(subtitle, 1);
+                }
             }
             let button = lv::image(
                 card,

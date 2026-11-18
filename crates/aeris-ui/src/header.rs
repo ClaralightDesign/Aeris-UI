@@ -1,7 +1,13 @@
 //! Header component: 336×94, four text layouts, optional glass action buttons.
 
-use crate::assets::{BitmapAsset, BUTTON_ADD, BUTTON_BACK, BUTTON_CLOSE, BUTTON_SETTINGS, HEADER_BACKGROUND, HEADER_SHADOW_LEFT, HEADER_SHADOW_RIGHT};
-use crate::geometry::Rect;
+use crate::assets::{
+    BitmapAsset, BUTTON_ADD, BUTTON_BACK, BUTTON_CLOSE, BUTTON_SETTINGS, HEADER_BACKGROUND,
+    HEADER_SHADOW_LEFT, HEADER_SHADOW_RIGHT,
+};
+use crate::{
+    geometry::{Rect, Viewport},
+    Apx,
+};
 
 pub const HEADER_WIDTH: i32 = 336;
 pub const HEADER_HEIGHT: i32 = 94;
@@ -64,6 +70,70 @@ impl HeaderVariant {
             HEADER_BACKGROUND
         }
     }
+}
+
+/// Named layouts of the Header & Footer component.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum HeaderStyle {
+    #[default]
+    Top,
+    /// Device navigation: a back header on wide displays, a title and arc clock
+    /// on a narrow capsule display, where navigation uses the system gesture.
+    Navigation,
+    Bottom,
+    Left,
+    Right,
+    Simple,
+    CenterSimple,
+    HeaderButton,
+    FooterButton,
+}
+
+impl HeaderStyle {
+    #[allow(non_upper_case_globals)]
+    #[deprecated(note = "Use HeaderStyle::CenterSimple")]
+    pub const ClockOnly: Self = Self::CenterSimple;
+
+    pub const fn supports_large_title(self) -> bool {
+        matches!(
+            self,
+            Self::Top | Self::Navigation | Self::Left | Self::Right
+        )
+    }
+}
+
+pub const LARGE_TITLE_SCROLL_PX: i32 = 91;
+
+/// One title, continuously scaled from 7 apx to 4.5 apx over 12 apx of scroll.
+#[derive(Clone, Copy, Debug)]
+pub struct ShrinkingTitleLayout {
+    pub expanded_px: i32,
+    pub compact_px: i32,
+    pub scroll_px: i32,
+}
+
+impl ShrinkingTitleLayout {
+    pub const fn new(viewport: Viewport) -> Self {
+        Self {
+            expanded_px: viewport.apx(Apx::new(7)),
+            compact_px: viewport.apx(Apx::from_halves(9)),
+            scroll_px: viewport.apx(Apx::new(12)),
+        }
+    }
+
+    /// LVGL's 1/256 transform scale; retains fractional font sizes while moving.
+    pub fn scale(self, scroll_y: i32, source_px: i32) -> u32 {
+        let offset = scroll_y.clamp(0, self.scroll_px);
+        let pixels =
+            self.expanded_px * self.scroll_px - (self.expanded_px - self.compact_px) * offset;
+        ((pixels * 256 + source_px * self.scroll_px / 2) / (source_px * self.scroll_px)) as u32
+    }
+}
+
+/// Large and compact title opacity at the current vertical scroll offset.
+pub fn title_opacities(scroll_y: i32) -> (u8, u8) {
+    let compact = (scroll_y.clamp(0, LARGE_TITLE_SCROLL_PX) * 255 / LARGE_TITLE_SCROLL_PX) as u8;
+    (255 - compact, compact)
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -145,31 +215,52 @@ pub struct HeaderLayout {
 
 impl HeaderLayout {
     pub fn measure(props: HeaderProps<'_>) -> Self {
-        let frame = Rect::new(0, 0, HEADER_WIDTH, HEADER_HEIGHT);
+        Self::measure_in(props, HEADER_WIDTH).expect("the default header width fits")
+    }
+
+    /// Measures a header in local coordinates at the assigned width.
+    pub fn measure_in(props: HeaderProps<'_>, width: i32) -> Option<Self> {
+        const MIN_TEXT_WIDTH: i32 = 80;
+        const MIN_BUTTON_SIZE: i32 = 44;
+        if width < 104 {
+            return None;
+        }
+        let button_count = i32::from(props.left.is_present()) + i32::from(props.right.is_present());
+        let button_size = if button_count == 0 {
+            BUTTON_SIZE
+        } else {
+            ((width - 2 * PADDING - MIN_TEXT_WIDTH) / button_count).min(BUTTON_SIZE)
+        };
+        if button_size < MIN_BUTTON_SIZE {
+            return None;
+        }
+        let frame = Rect::new(0, 0, width, HEADER_HEIGHT);
         let backdrop = Rect::new(
-            (HEADER_WIDTH - BACKDROP_WIDTH) / 2,
+            (width - BACKDROP_WIDTH) / 2,
             BACKDROP_TOP,
             BACKDROP_WIDTH,
             BACKDROP_HEIGHT,
         );
 
-        let left_button = props
-            .left
-            .is_present()
-            .then_some(Rect::new(PADDING, PADDING, BUTTON_SIZE, BUTTON_SIZE));
-        let right_button = props.right.is_present().then_some(Rect::new(
-            HEADER_WIDTH - PADDING - BUTTON_SIZE,
+        let left_button = props.left.is_present().then_some(Rect::new(
             PADDING,
-            BUTTON_SIZE,
-            BUTTON_SIZE,
+            PADDING,
+            button_size,
+            button_size,
+        ));
+        let right_button = props.right.is_present().then_some(Rect::new(
+            width - PADDING - button_size,
+            PADDING,
+            button_size,
+            button_size,
         ));
 
         let (content, time_align, title_align, show_title) = match props.variant {
             HeaderVariant::Center => (
                 Rect::new(
-                    PADDING + BUTTON_SIZE,
+                    PADDING + button_size,
                     PADDING,
-                    HEADER_WIDTH - 2 * (PADDING + BUTTON_SIZE),
+                    width - 2 * (PADDING + button_size),
                     CONTENT_HEIGHT,
                 ),
                 TextAlign::Center,
@@ -178,9 +269,9 @@ impl HeaderLayout {
             ),
             HeaderVariant::Right => (
                 Rect::new(
-                    PADDING + BUTTON_SIZE,
+                    PADDING + button_size,
                     PADDING,
-                    HEADER_WIDTH - 2 * PADDING - BUTTON_SIZE,
+                    width - 2 * PADDING - button_size,
                     CONTENT_HEIGHT,
                 ),
                 TextAlign::End,
@@ -191,7 +282,7 @@ impl HeaderLayout {
                 Rect::new(
                     PADDING + 10,
                     PADDING,
-                    HEADER_WIDTH - 2 * PADDING - BUTTON_SIZE - 10,
+                    width - 2 * PADDING - button_size - 10,
                     CONTENT_HEIGHT,
                 ),
                 TextAlign::Start,
@@ -202,7 +293,7 @@ impl HeaderLayout {
                 Rect::new(
                     PADDING + 10,
                     PADDING,
-                    HEADER_WIDTH - 2 * PADDING - 10,
+                    width - 2 * PADDING - 10,
                     CONTENT_HEIGHT,
                 ),
                 TextAlign::End,
@@ -210,6 +301,9 @@ impl HeaderLayout {
                 false,
             ),
         };
+        if content.w <= 0 {
+            return None;
+        }
 
         // 所有布局共用时钟的纵向位置。
         let time_y = content.y + (content.h - TIME_LINE_HEIGHT - TITLE_LINE_HEIGHT) / 2;
@@ -226,7 +320,7 @@ impl HeaderLayout {
             right_button.map(HeaderLayout::icon_box),
         );
 
-        Self {
+        Some(Self {
             frame,
             backdrop,
             left_button,
@@ -238,13 +332,13 @@ impl HeaderLayout {
             right_icon,
             time_align,
             title_align,
-        }
+        })
     }
 
     pub const fn icon_box(button: Rect) -> Rect {
         Rect::new(
-            button.x + (BUTTON_SIZE - ICON_SIZE) / 2,
-            button.y + (BUTTON_SIZE - ICON_SIZE) / 2,
+            button.x + (button.w - ICON_SIZE) / 2,
+            button.y + (button.h - ICON_SIZE) / 2,
             ICON_SIZE,
             ICON_SIZE,
         )
@@ -254,6 +348,39 @@ impl HeaderLayout {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn capsule_title_scales_continuously_and_clamps_at_both_ends() {
+        let layout = ShrinkingTitleLayout::new(crate::geometry::DisplayProfile::BAND_11.viewport);
+        assert_eq!(
+            (layout.expanded_px, layout.compact_px, layout.scroll_px),
+            (39, 25, 66)
+        );
+        assert_eq!(layout.scale(-10, 44), layout.scale(0, 44));
+        assert_eq!(layout.scale(200, 44), layout.scale(66, 44));
+        assert!((0..66).all(|y| layout.scale(y, 44) > layout.scale(y + 1, 44)));
+    }
+
+    #[test]
+    fn large_title_follows_scroll_in_both_directions() {
+        for offset in [-20, 0] {
+            assert_eq!(title_opacities(offset), (255, 0));
+        }
+        let middle = title_opacities(45);
+        assert!(middle.0 > 0 && middle.1 > 0);
+        assert_eq!(u16::from(middle.0) + u16::from(middle.1), 255);
+        for offset in [LARGE_TITLE_SCROLL_PX, 200] {
+            assert_eq!(title_opacities(offset), (0, 255));
+        }
+        assert_eq!(title_opacities(45), middle);
+        assert_eq!(title_opacities(0), (255, 0));
+        assert!(HeaderStyle::Top.supports_large_title());
+        assert!(HeaderStyle::Left.supports_large_title());
+        assert!(HeaderStyle::Right.supports_large_title());
+        assert!(!HeaderStyle::Bottom.supports_large_title());
+        assert!(!HeaderStyle::Simple.supports_large_title());
+        assert!(!HeaderStyle::CenterSimple.supports_large_title());
+    }
 
     const ALL: [HeaderVariant; 4] = [
         HeaderVariant::Center,
@@ -313,11 +440,8 @@ mod tests {
 
     #[test]
     fn left_layout_has_only_a_close_button_and_left_aligned_text() {
-        let layout = HeaderLayout::measure(HeaderProps::new(
-            "09:28",
-            "我的计时器",
-            HeaderVariant::Left,
-        ));
+        let layout =
+            HeaderLayout::measure(HeaderProps::new("09:28", "我的计时器", HeaderVariant::Left));
         assert_eq!(layout.left_button, None);
         assert_eq!(layout.right_button, Some(Rect::new(262, 6, 68, 68)));
         assert_eq!(layout.time_align, TextAlign::Start);
@@ -352,5 +476,23 @@ mod tests {
     fn icon_boxes_are_centred_in_their_buttons() {
         let button = Rect::new(6, 6, 68, 68);
         assert_eq!(HeaderLayout::icon_box(button), Rect::new(20, 20, 40, 40));
+    }
+
+    #[test]
+    fn compact_center_layout_keeps_both_actions_and_text_inside_the_bar() {
+        let layout = HeaderLayout::measure_in(
+            HeaderProps::new("09:28", "Aeris", HeaderVariant::Center),
+            188,
+        )
+        .unwrap();
+        let left = layout.left_button.unwrap();
+        let right = layout.right_button.unwrap();
+        assert!(left.w >= 44);
+        assert!(layout.content.w >= 80);
+        assert!(layout.frame.contains(left) && layout.frame.contains(right));
+        assert!(layout.frame.contains(layout.content));
+        assert!(!layout.content.overlaps(left) && !layout.content.overlaps(right));
+        assert!(left.contains(layout.left_icon.unwrap()));
+        assert!(right.contains(layout.right_icon.unwrap()));
     }
 }

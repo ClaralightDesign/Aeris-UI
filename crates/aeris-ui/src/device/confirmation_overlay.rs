@@ -5,30 +5,27 @@ use core::ffi::CStr;
 use canopus_target_private::*;
 
 use super::{
-    assets, dialog, font,
+    assets, dialog, header,
     lv::{self, Font, Obj},
-    page,
 };
-use crate::theme::Color;
+use crate::{
+    geometry::{DisplayProfile, Viewport},
+    theme::Color,
+    Apx,
+};
 
 const DISC_SIZE: i32 = 182;
 const CENTER_Y: i32 = 221;
 const ICON_SIZE: i32 = 102;
 const TEXT_INSET: i32 = 22;
-const TEXT_WIDTH: i32 = page::WIDTH - 2 * TEXT_INSET;
-const TEXT_HEIGHT: i32 = 34;
-const TEXT_Y: i32 = 422 - TEXT_HEIGHT / 2;
+const TITLE_CENTER_Y: i32 = 422;
 const ICON_DELAY_MS: u32 = 96;
 const ICON_DURATION_MS: u32 = 168;
 const DETAIL_DISC_SIZE: i32 = 72;
-const DETAIL_CENTER_Y: i32 = 146;
-const DETAIL_TITLE_Y: i32 = 198;
-const DETAIL_BODY_Y: i32 = 243;
-const DETAIL_BODY_HEIGHT: i32 = 214;
+const DETAIL_CENTER_Y: i32 = 198;
 pub const DEFAULT_TIMEOUT_MS: u32 = 4000;
 pub const DEFAULT_FIRST_STAGE_MS: u32 = 550;
 pub(super) const DETAIL_DURATION_MS: u32 = 320;
-const DETAIL_BODY_TRAVEL: i32 = page::HEIGHT + 18 - DETAIL_BODY_Y;
 
 /// 底板的外观，与图标和操作结果独立。
 #[derive(Clone, Copy)]
@@ -106,6 +103,30 @@ pub unsafe fn show_with_options(
     message: &CStr,
     options: Options<'_>,
 ) -> bool {
+    unsafe {
+        show_with_options_in(
+            root,
+            super::display_profile().viewport,
+            style,
+            icon,
+            message,
+            options,
+        )
+    }
+}
+
+/// Shows a confirmation within the current display's safe area.
+///
+/// # Safety
+/// Call on the UI thread with a live root covering the viewport.
+pub unsafe fn show_with_options_in(
+    root: Obj,
+    viewport: Viewport,
+    style: Style,
+    icon: Option<Icon<'_>>,
+    message: &CStr,
+    options: Options<'_>,
+) -> bool {
     if root.is_null() || dialog::busy() {
         return false;
     }
@@ -122,39 +143,66 @@ pub unsafe fn show_with_options(
     if width == 0 || height == 0 {
         return false;
     }
-    let Some(layers) = (unsafe { dialog::layers(root, page::WIDTH, page::HEIGHT) }) else {
+    let bounds = viewport.bounds();
+    let safe = viewport.content();
+    let capsule = viewport == DisplayProfile::BAND_11.viewport;
+    let wide = viewport == DisplayProfile::REDMI_WATCH.viewport;
+    let (center_y, title_center, detail_center) = if capsule {
+        (256, 448, 200)
+    } else if wide {
+        (234, 448, 200)
+    } else {
+        (
+            CENTER_Y * bounds.h / 480,
+            TITLE_CENTER_Y * bounds.h / 480,
+            DETAIL_CENTER_Y * bounds.h / 480,
+        )
+    };
+    let line = viewport.apx(Apx::new(5));
+    let text_y = title_center - line / 2;
+    let detail_title = detail_center + DETAIL_DISC_SIZE / 2 + 16;
+    let body_y = detail_title + line + 12;
+    let body_height = safe.bottom() - body_y - 12;
+    let disc_size = (if capsule { 96 } else { DISC_SIZE }).min(safe.w);
+    let inset = if capsule { 10 } else { TEXT_INSET };
+    let text_width = safe.w - 2 * inset;
+    if text_width <= 0 || disc_size <= 0 || (options.description.is_some() && body_height < line) {
+        return false;
+    }
+    let Some(layers) = (unsafe { dialog::layers_in(root, viewport) }) else {
         return false;
     };
     let (disc, glyph, text, body) = unsafe {
         lv::inspect_name(layers.surface, c"AerisUI.ConfirmationOverlay");
-        lv::style(layers.surface, LV_STYLE_CLIP_CORNER, 1);
-        for x in [0, page::WIDTH / 2] {
-            let shade = lv::image(layers.content, assets::HEADER_BACKGROUND, x, 0);
-            if !shade.is_null() {
-                lvx_object_clear_flag(shade, lv::CLICKABLE | lv::SCROLLABLE);
+        if viewport == Viewport::BAND_10_PRO {
+            for x in [0, bounds.w / 2] {
+                let shade = lv::image(layers.content, assets::HEADER_BACKGROUND, x, 0);
+                if !shade.is_null() {
+                    lvx_object_clear_flag(shade, lv::CLICKABLE | lv::SCROLLABLE);
+                }
             }
         }
         let (color, opacity) = style.disc();
         let disc = lv::background(
             layers.content,
-            DISC_SIZE,
-            DISC_SIZE,
+            disc_size,
+            disc_size,
             color,
-            (DISC_SIZE / 2) as u32,
+            (disc_size / 2) as u32,
         );
         let glyph = lv::image(
             layers.content,
             path,
-            (page::WIDTH - width) / 2,
-            CENTER_Y - height / 2,
+            safe.center_x() - width / 2,
+            center_y - height / 2,
         );
         let text = lv::label(
             layers.content,
             message.to_bytes_with_nul(),
-            TEXT_INSET,
-            TEXT_Y,
-            TEXT_WIDTH,
-            TEXT_HEIGHT,
+            safe.x + inset,
+            text_y,
+            text_width,
+            line,
             Color::PrimaryText.resolve(),
             Font::Small24,
         );
@@ -162,10 +210,10 @@ pub unsafe fn show_with_options(
             let label = lv::label(
                 layers.content,
                 description.to_bytes_with_nul(),
-                TEXT_INSET,
-                DETAIL_BODY_Y,
-                TEXT_WIDTH,
-                DETAIL_BODY_HEIGHT,
+                safe.x + inset,
+                body_y,
+                text_width,
+                body_height,
                 Color::SecondaryText.resolve(),
                 Font::Small24,
             );
@@ -173,7 +221,15 @@ pub unsafe fn show_with_options(
                 lvx_object_delete(layers.surface);
                 return false;
             }
-            lv::text_px(label, TEXT_WIDTH, DETAIL_BODY_HEIGHT, 2, Font::Small24, 25);
+            lv::text_apx_in(
+                label,
+                viewport,
+                text_width,
+                body_height,
+                2,
+                Font::Small24,
+                crate::TextSize::Body.apx(),
+            );
             lv::style(label, lv::TEXT_LINE_SPACE, 1);
             lvx_label_set_long_mode(label, 1);
             lvx_object_clear_flag(label, lv::CLICKABLE | lv::SCROLLABLE);
@@ -181,7 +237,10 @@ pub unsafe fn show_with_options(
         } else {
             core::ptr::null_mut()
         };
-        let (clock, _) = font::clock(layers.content, &page::clock_bytes(), [132, 10, 188, 34], 3);
+        let Some(clock) = header::clock_in(layers.content, viewport) else {
+            lvx_object_delete(layers.surface);
+            return false;
+        };
         if [disc, glyph, text, clock]
             .iter()
             .any(|object| object.is_null())
@@ -195,15 +254,23 @@ pub unsafe fn show_with_options(
         lvx_object_align(
             disc,
             1,
-            (page::WIDTH - DISC_SIZE) / 2,
-            CENTER_Y - DISC_SIZE / 2,
+            safe.center_x() - disc_size / 2,
+            center_y - disc_size / 2,
         );
         lv::style(disc, lv::BG_OPA, opacity);
-        lv::style(disc, lv::TRANSFORM_PIVOT_X, (DISC_SIZE / 2) as u32);
-        lv::style(disc, lv::TRANSFORM_PIVOT_Y, (DISC_SIZE / 2) as u32);
+        lv::style(disc, lv::TRANSFORM_PIVOT_X, (disc_size / 2) as u32);
+        lv::style(disc, lv::TRANSFORM_PIVOT_Y, (disc_size / 2) as u32);
         lv::style(glyph, lv::TRANSFORM_PIVOT_X, (width / 2) as u32);
         lv::style(glyph, lv::TRANSFORM_PIVOT_Y, (height / 2) as u32);
-        lv::text_px(text, TEXT_WIDTH, TEXT_HEIGHT, 2, Font::Small24, 25);
+        lv::text_apx_in(
+            text,
+            viewport,
+            text_width,
+            line,
+            2,
+            Font::Small24,
+            crate::TextSize::Body.apx(),
+        );
         lvx_label_set_long_mode(text, 1);
         lvx_event_add(layers.surface, tapped, EVENT_CLICKED, root);
         lvx_event_add(layers.surface, deleted, lv::EVENT_DELETE, layers.surface);
@@ -220,10 +287,14 @@ pub unsafe fn show_with_options(
         glyph,
         text,
         body,
+        disc_size,
+        disc_shift: detail_center - center_y,
+        title_shift: detail_title - text_y,
+        body_travel: bounds.h + 18 - body_y,
         first_stage_ms: options.first_stage_ms,
         first_stage_tap: options.first_stage_tap,
         timeout_ms: options.timeout_ms,
-        glyph_scale: (256 * ICON_SIZE / width.max(height)).max(1),
+        glyph_scale: (256 * ICON_SIZE * disc_size / DISC_SIZE / width.max(height)).max(1),
         reduced_motion,
     };
     dialog::open_confirmation(root, layers, motion)
@@ -254,6 +325,10 @@ pub(super) struct Motion {
     glyph: Obj,
     text: Obj,
     body: Obj,
+    disc_size: i32,
+    disc_shift: i32,
+    title_shift: i32,
+    body_travel: i32,
     pub first_stage_ms: u32,
     pub first_stage_tap: FirstStageTap,
     pub timeout_ms: Option<u32>,
@@ -275,22 +350,23 @@ impl Motion {
     pub fn paint(self, content: u32, icon: u32, detail: u32) {
         // 一级标题沿用同一标签，正文从屏幕下方滑入。
         let detail = detail as i32;
-        let size = DISC_SIZE * 255 - (DISC_SIZE - DETAIL_DISC_SIZE) * detail;
-        let disc_scale = ((320 - 64 * content / 255) as i32 * size / (DISC_SIZE * 255)) as u32;
+        let size =
+            self.disc_size * 255 - (self.disc_size - DETAIL_DISC_SIZE.min(self.disc_size)) * detail;
+        let disc_scale = ((320 - 64 * content / 255) as i32 * size / (self.disc_size * 255)) as u32;
         lv::style(self.disc, lv::TRANSFORM_SCALE_X, disc_scale);
         lv::style(self.disc, lv::TRANSFORM_SCALE_Y, disc_scale);
-        let disc_offset = (DETAIL_CENTER_Y - CENTER_Y) * detail / 255;
+        let disc_offset = self.disc_shift * detail / 255;
         lv::style(self.disc, lv::TRANSLATE_Y, disc_offset as u32);
         lv::style(self.glyph, lv::TRANSLATE_Y, disc_offset as u32);
         let content_offset = 18 * (255 - content) as i32 / 255;
-        let title_offset = content_offset + (DETAIL_TITLE_Y - TEXT_Y) * detail / 255;
+        let title_offset = content_offset + self.title_shift * detail / 255;
         lv::style(self.text, lv::TRANSLATE_Y, title_offset as u32);
         lv::style(self.glyph, lv::OPA, icon);
         let icon_scale = self.glyph_scale * (64 + 192 * icon as i32 / 255) / 256;
-        let scale = (icon_scale * size / (DISC_SIZE * 255)).max(1);
+        let scale = (icon_scale * size / (self.disc_size * 255)).max(1);
         unsafe { lvx_image_set_scale(self.glyph, scale, scale) };
         if !self.body.is_null() {
-            let offset = content_offset + DETAIL_BODY_TRAVEL * (255 - detail) / 255;
+            let offset = content_offset + self.body_travel * (255 - detail) / 255;
             lv::style(self.body, lv::OPA, detail as u32);
             lv::style(self.body, lv::TRANSLATE_Y, offset as u32);
         }

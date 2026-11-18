@@ -3,7 +3,7 @@
 use canopus_target_private::LvxEventCallback;
 
 use super::{
-    cards::Choice,
+    cards::{CardOptions, Choice},
     lv::{self, Obj},
 };
 
@@ -14,6 +14,7 @@ pub struct ChoiceList<const N: usize> {
 impl<const N: usize> ChoiceList<N> {
     pub const EMPTY: Self = Self { rows: [None; N] };
 
+    #[deprecated(note = "Use ChoiceList::new_with_options to configure each card")]
     pub unsafe fn new<'a>(
         parent: Obj,
         top: i32,
@@ -22,13 +23,28 @@ impl<const N: usize> ChoiceList<N> {
         selected: Option<usize>,
         on_select: LvxEventCallback,
     ) -> Self {
+        let options = options
+            .into_iter()
+            .map(|(title, subtitle)| (title, subtitle, CardOptions::default()));
+        unsafe { Self::new_with_options(parent, top, step, options, selected, on_select) }
+    }
+
+    pub unsafe fn new_with_options<'a>(
+        parent: Obj,
+        top: i32,
+        step: i32,
+        options: impl IntoIterator<Item = (&'a str, &'a str, CardOptions)>,
+        selected: Option<usize>,
+        on_select: LvxEventCallback,
+    ) -> Self {
         let mut list = Self::EMPTY;
-        for (index, (title, subtitle)) in options.into_iter().take(N).enumerate() {
+        for (index, (title, subtitle, options)) in options.into_iter().take(N).enumerate() {
             let card = unsafe { lv::card(parent, 4, top + index as i32 * step) };
             if !card.is_null() {
                 unsafe { lv::inspect_name(card, c"AerisUI.ChoiceListRow") };
-                list.rows[index] =
-                    Some(unsafe { Choice::radio(card, title, subtitle, selected == Some(index)) });
+                list.rows[index] = Some(unsafe {
+                    Choice::single_choice(card, title, subtitle, selected == Some(index), options)
+                });
                 lv::bind(card, on_select, index);
             }
         }

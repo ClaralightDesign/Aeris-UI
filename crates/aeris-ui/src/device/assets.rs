@@ -25,6 +25,31 @@ pub const ICON_X: &[u8] = asset_path!("header-icon-x.bin");
 pub const ICON_PLAY: &[u8] = asset_path!("header-icon-play.bin");
 pub const ICON_PAUSE: &[u8] = asset_path!("header-icon-pause.bin");
 
+pub(super) const STATUS_SUCCESS_BACKGROUND: &[u8] = asset_path!("status-success-background.bin");
+pub(super) const STATUS_WARNING_BACKGROUND: &[u8] = asset_path!("status-warning-background.bin");
+pub(super) const STATUS_ERROR_BACKGROUND: &[u8] = asset_path!("status-error-background.bin");
+pub(super) const STATUS_SUCCESS_ICON: &[u8] = asset_path!("status-success-icon.bin");
+pub(super) const STATUS_WARNING_ICON: &[u8] = asset_path!("status-warning-icon.bin");
+pub(super) const STATUS_ERROR_ICON: &[u8] = asset_path!("status-error-icon.bin");
+pub(super) const STATUS_SUCCESS_SIMPLE_ICON: &[u8] = asset_path!("status-success-simple-icon.bin");
+pub(super) const STATUS_WARNING_SIMPLE_ICON: &[u8] = asset_path!("status-warning-simple-icon.bin");
+pub(super) const STATUS_ERROR_SIMPLE_ICON: &[u8] = asset_path!("status-error-simple-icon.bin");
+pub(super) const STATUS_DISCLOSURE: &[u8] = asset_path!("status-disclosure-icon.bin");
+pub(super) const CARD_UP_DOWN: &[u8] = asset_path!("card-up-down.bin");
+pub(super) const PROGRESS_RING_FILL: [&[u8]; 4] = [
+    asset_path!("progress-ring-fill-0.bin"),
+    asset_path!("progress-ring-fill-1.bin"),
+    asset_path!("progress-ring-fill-2.bin"),
+    asset_path!("progress-ring-fill-3.bin"),
+];
+pub(super) const PROGRESS_RING_FILL_START: &[u8] = asset_path!("progress-ring-fill-start.bin");
+pub(super) const PROGRESS_RING_FILL_ENDS: [&[u8]; 1] =
+    [asset_path!("progress-ring-fill-ends-0.bin")];
+pub(super) const PROGRESS_RING_TRACK: &[u8] = asset_path!("progress-ring-track.bin");
+pub(super) const PROGRESS_RING_INDETERMINATE: &[u8] =
+    asset_path!("progress-ring-indeterminate.bin");
+pub(super) const TEXT_BLOCK_LIGHTBULB: &[u8] = asset_path!("text-block-lightbulb.bin");
+
 pub const CARD_FACE: &[u8] = asset_path!("card-face.bin");
 pub const CHECKBOX_MINUS: &[u8] = asset_path!("checkbox-minus.bin");
 pub const CHECKBOX_CHECK: &[u8] = asset_path!("checkbox-check.bin");
@@ -112,6 +137,41 @@ macro_rules! asset {
 }
 
 pub const ALL: &[(&str, &[u8])] = &[
+    asset!("button-normal-center.bin", "button-normal-center.bin"),
+    asset!("button-normal-dimmed-center.bin", "button-normal-dimmed-center.bin"),
+    asset!("button-normal-dimmed-left.bin", "button-normal-dimmed-left.bin"),
+    asset!("button-normal-dimmed-right.bin", "button-normal-dimmed-right.bin"),
+    asset!("button-normal-left.bin", "button-normal-left.bin"),
+    asset!("button-normal-right.bin", "button-normal-right.bin"),
+    asset!("button-regular-center.bin", "button-regular-center.bin"),
+    asset!("button-regular-left.bin", "button-regular-left.bin"),
+    asset!("button-regular-right.bin", "button-regular-right.bin"),
+    asset!("button-secondary-center.bin", "button-secondary-center.bin"),
+    asset!("button-secondary-left.bin", "button-secondary-left.bin"),
+    asset!("button-secondary-right.bin", "button-secondary-right.bin"),
+    asset!("round-add-wide.bin", "round-add-wide.bin"),
+    asset!("round-back-edge.bin", "round-back-edge.bin"),
+    asset!("round-back-wide.bin", "round-back-wide.bin"),
+    asset!("round-bottom-glass-accent.bin", "round-bottom-glass-accent.bin"),
+    asset!("round-bottom-glass-neutral.bin", "round-bottom-glass-neutral.bin"),
+    asset!("round-bottom-normal-accent.bin", "round-bottom-normal-accent.bin"),
+    asset!("round-bottom-normal-neutral.bin", "round-bottom-normal-neutral.bin"),
+    asset!("round-check-edge.bin", "round-check-edge.bin"),
+    asset!("round-close-wide.bin", "round-close-wide.bin"),
+    asset!("round-settings-edge.bin", "round-settings-edge.bin"),
+    asset!("round-settings-wide.bin", "round-settings-wide.bin"),
+    asset!("round-standard-glass-accent.bin", "round-standard-glass-accent.bin"),
+    asset!("round-standard-glass-neutral.bin", "round-standard-glass-neutral.bin"),
+    asset!("round-standard-normal-accent.bin", "round-standard-normal-accent.bin"),
+    asset!("round-standard-normal-neutral.bin", "round-standard-normal-neutral.bin"),
+    asset!("round-top-glass-accent.bin", "round-top-glass-accent.bin"),
+    asset!("round-top-glass-neutral.bin", "round-top-glass-neutral.bin"),
+    asset!("round-top-normal-accent.bin", "round-top-normal-accent.bin"),
+    asset!("round-top-normal-neutral.bin", "round-top-normal-neutral.bin"),
+    asset!("round-wide-glass-accent.bin", "round-wide-glass-accent.bin"),
+    asset!("round-wide-glass-neutral.bin", "round-wide-glass-neutral.bin"),
+    asset!("round-wide-normal-accent.bin", "round-wide-normal-accent.bin"),
+    asset!("round-wide-normal-neutral.bin", "round-wide-normal-neutral.bin"),
     asset!("confirmation-success.bin", "confirmation-success.bin"),
     asset!("footer-background.bin", "footer-background.bin"),
     asset!("timer-ring-card-0.bin", "timer-ring-card-0.bin"),
@@ -161,6 +221,50 @@ pub const ALL: &[(&str, &[u8])] = &[
     asset!("header-left.bin", "header-left.bin"),
     asset!("header-right.bin", "header-right.bin"),
     asset!("header-background.bin", "header-background.bin"),
+    asset!(
+        "status-success-background.bin",
+        "status-success-background.bin"
+    ),
+    asset!(
+        "status-warning-background.bin",
+        "status-warning-background.bin"
+    ),
+    asset!("status-error-background.bin", "status-error-background.bin"),
+    asset!("status-success-icon.bin", "status-success-icon.bin"),
+    asset!("status-warning-icon.bin", "status-warning-icon.bin"),
+    asset!("status-error-icon.bin", "status-error-icon.bin"),
+    asset!(
+        "status-success-simple-icon.bin",
+        "status-success-simple-icon.bin"
+    ),
+    asset!(
+        "status-warning-simple-icon.bin",
+        "status-warning-simple-icon.bin"
+    ),
+    asset!(
+        "status-error-simple-icon.bin",
+        "status-error-simple-icon.bin"
+    ),
+    asset!("status-disclosure-icon.bin", "status-disclosure-icon.bin"),
+    asset!("card-up-down.bin", "card-up-down.bin"),
+    asset!("progress-ring-fill-0.bin", "progress-ring-fill-0.bin"),
+    asset!("progress-ring-fill-1.bin", "progress-ring-fill-1.bin"),
+    asset!("progress-ring-fill-2.bin", "progress-ring-fill-2.bin"),
+    asset!("progress-ring-fill-3.bin", "progress-ring-fill-3.bin"),
+    asset!(
+        "progress-ring-fill-start.bin",
+        "progress-ring-fill-start.bin"
+    ),
+    asset!(
+        "progress-ring-fill-ends-0.bin",
+        "progress-ring-fill-ends-0.bin"
+    ),
+    asset!("progress-ring-track.bin", "progress-ring-track.bin"),
+    asset!(
+        "progress-ring-indeterminate.bin",
+        "progress-ring-indeterminate.bin"
+    ),
+    asset!("text-block-lightbulb.bin", "text-block-lightbulb.bin"),
     asset!("card-face.bin", "card-face.bin"),
     asset!("checkbox-minus.bin", "checkbox-minus.bin"),
     asset!("checkbox-check.bin", "checkbox-check.bin"),
@@ -301,9 +405,9 @@ pub fn fonts_ready() -> bool {
 #[cfg(target_os = "emscripten")]
 pub fn ensure_files(entries: &[(&str, &[u8])]) -> bool {
     let mut scratch = [0; super::packed_assets::BLOCK_SIZE];
-    entries.iter().all(|&(name, data)| unsafe {
-        crate::devbox::assets::register(name, data, &mut scratch)
-    })
+    entries
+        .iter()
+        .all(|&(name, data)| unsafe { crate::devbox::assets::register(name, data, &mut scratch) })
 }
 
 #[cfg(target_os = "emscripten")]

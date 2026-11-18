@@ -106,12 +106,33 @@ pub struct Checkbox {
 
 impl Checkbox {
     /// 在有效的父对象中创建卡片，父对象负责销毁其子对象。
+    #[deprecated(note = "Use Checkbox::create_with_options and CardOptions")]
     pub unsafe fn create(
         parent: Obj,
         area: Rect,
         title: &str,
         subtitle: &str,
         state: State,
+    ) -> Option<Self> {
+        unsafe {
+            Self::create_with_options(
+                parent,
+                area,
+                title,
+                subtitle,
+                state,
+                cards::CardOptions::default(),
+            )
+        }
+    }
+
+    pub unsafe fn create_with_options(
+        parent: Obj,
+        area: Rect,
+        title: &str,
+        subtitle: &str,
+        state: State,
+        options: cards::CardOptions,
     ) -> Option<Self> {
         if parent.is_null() || area.w < MIN_WIDTH || area.h < HEIGHT {
             return None;
@@ -131,8 +152,14 @@ impl Checkbox {
             lvx_object_add_flag(root, lv::CLICKABLE);
             lv::style(root, lv::BG_OPA, 31);
 
-            let text_y = (area.h - 2 * cards::LINE_HEIGHT - TEXT_GAP) / 2;
-            let title = cards::text_font(
+            cards::apply_dimming(root, options.dimmed);
+            let text_height = if options.show_subtitle {
+                2 * cards::LINE_HEIGHT + TEXT_GAP
+            } else {
+                cards::LINE_HEIGHT
+            };
+            let text_y = (area.h - text_height) / 2;
+            let title = cards::text_apx(
                 root,
                 title,
                 TEXT_INSET,
@@ -141,19 +168,21 @@ impl Checkbox {
                 cards::LINE_HEIGHT,
                 primary,
                 Font::Medium24,
-                cards::CARD_TEXT_PX,
+                cards::CARD_TEXT_SIZE,
             );
-            let subtitle = cards::text_font(
-                root,
-                subtitle,
-                TEXT_INSET,
-                text_y + cards::LINE_HEIGHT + TEXT_GAP,
-                text_width,
-                cards::LINE_HEIGHT,
-                Color::SecondaryText.resolve_or(primary),
-                Font::Small24,
-                cards::CARD_TEXT_PX,
-            );
+            let subtitle = options.show_subtitle.then(|| {
+                cards::text_apx(
+                    root,
+                    subtitle,
+                    TEXT_INSET,
+                    text_y + cards::LINE_HEIGHT + TEXT_GAP,
+                    text_width,
+                    cards::LINE_HEIGHT,
+                    Color::SecondaryText.resolve_or(primary),
+                    Font::Small24,
+                    cards::CARD_TEXT_SIZE,
+                )
+            });
             let background = lv::background(
                 root,
                 INDICATOR_SIZE,
@@ -161,16 +190,18 @@ impl Checkbox {
                 primary,
                 INDICATOR_RADIUS,
             );
-            if [title, subtitle, background]
-                .into_iter()
-                .any(|object| object.is_null())
+            if title.is_null()
+                || background.is_null()
+                || subtitle.is_some_and(|object| object.is_null())
             {
                 lvx_object_delete(root);
                 return None;
             }
-            lv::style(subtitle, lv::TEXT_OPA, 140);
             lvx_label_set_long_mode(title, 1);
-            lvx_label_set_long_mode(subtitle, 1);
+            if let Some(subtitle) = subtitle {
+                lv::style(subtitle, lv::TEXT_OPA, 140);
+                lvx_label_set_long_mode(subtitle, 1);
+            }
             let indicator_y = (area.h - INDICATOR_SIZE) / 2;
             lvx_object_align(background, 1, indicator_x, indicator_y);
             lvx_object_clear_flag(background, lv::CLICKABLE | lv::SCROLLABLE);

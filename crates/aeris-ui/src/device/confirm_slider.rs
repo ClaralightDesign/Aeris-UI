@@ -22,6 +22,13 @@ const TRACK_WIDTH: i32 = 328;
 
 pub const STOCK_BOUNDS: Rect = Rect::new(0, 388, page::WIDTH, 88);
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SlideActionStatus {
+    #[default]
+    Ready,
+    Completed,
+}
+
 pub struct Slider {
     thumb: Obj,
     caption: Obj,
@@ -84,9 +91,17 @@ impl Slider {
         }
     }
 
-    pub fn reset(&mut self) {
+    /// The resting appearance at either endpoint of the track.
+    pub fn set_status(&mut self, status: SlideActionStatus) {
         self.drag.press(None);
+        if status == SlideActionStatus::Completed {
+            self.drag.distance = self.layout.travel;
+        }
         self.paint();
+    }
+
+    pub fn reset(&mut self) {
+        self.set_status(SlideActionStatus::Ready);
     }
 
     pub fn drag(&mut self, event: Obj) -> bool {

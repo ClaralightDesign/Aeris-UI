@@ -1,5 +1,7 @@
 //! 屏幕边界与组件布局区域，单位为像素。
 
+use crate::{Apx, ApxScale};
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct Rect {
     pub x: i32,
@@ -61,20 +63,35 @@ impl Rect {
 pub struct Viewport {
     bounds: Rect,
     safe: Rect,
+    apx: ApxScale,
 }
 
 impl Viewport {
-    pub const BAND_10_PRO: Self = Self {
-        bounds: Rect::new(0, 0, 336, 480),
-        safe: Rect::new(0, 0, 336, 480),
-    };
+    pub const BAND_10_PRO: Self = DisplayProfile::BAND_10_PRO.viewport;
 
     pub const fn new(bounds: Rect, safe: Rect) -> Option<Self> {
         if bounds.w > 0 && bounds.h > 0 && safe.w > 0 && safe.h > 0 && bounds.contains(safe) {
-            Some(Self { bounds, safe })
+            Some(Self {
+                bounds,
+                safe,
+                apx: BASE_APX_SCALE,
+            })
         } else {
             None
         }
+    }
+
+    pub const fn with_apx_scale(mut self, apx: ApxScale) -> Self {
+        self.apx = apx;
+        self
+    }
+
+    pub const fn apx_scale(self) -> ApxScale {
+        self.apx
+    }
+
+    pub const fn apx(self, value: Apx) -> i32 {
+        self.apx.px(value)
     }
 
     pub const fn bounds(self) -> Rect {
@@ -90,6 +107,13 @@ impl Viewport {
             self.safe.h,
         )
     }
+
+    /// A scrolling surface that keeps horizontal safe insets and reaches both
+    /// screen edges vertically. Fixed headers and footers overlay this surface.
+    pub const fn vertical_content(self) -> Rect {
+        let safe = self.content();
+        Rect::new(safe.x, 0, safe.w, self.bounds.h)
+    }
 }
 
 /// 方形按钮或图标区域。
@@ -98,6 +122,36 @@ pub struct Square {
     pub x: i32,
     pub y: i32,
     pub size: i32,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ScreenShape {
+    Rectangle,
+    Capsule,
+    Circle,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct DisplayProfile {
+    pub id: &'static str,
+    pub name: &'static str,
+    pub shape: ScreenShape,
+    pub viewport: Viewport,
+}
+
+include!(concat!(env!("OUT_DIR"), "/display_profiles.rs"));
+
+impl DisplayProfile {
+    pub const BAND_10_PRO: Self = DISPLAY_PROFILES[0];
+    pub const BAND_11: Self = DISPLAY_PROFILES[1];
+    pub const REDMI_WATCH: Self = DISPLAY_PROFILES[2];
+
+    pub fn for_id(id: &str) -> Option<Self> {
+        DISPLAY_PROFILES
+            .iter()
+            .copied()
+            .find(|device| device.id == id)
+    }
 }
 
 #[cfg(test)]

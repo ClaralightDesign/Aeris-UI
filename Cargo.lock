@@ -8,8 +8,10 @@ version = "0.1.0"
 dependencies = [
  "canopus-abi",
  "canopus-runtime",
+ "canopus-target-generated",
  "canopus-target-private",
  "rolling-digits",
+ "serde_json",
 ]
 
 [[package]]

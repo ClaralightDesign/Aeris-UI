@@ -6,12 +6,28 @@ use crate::{geometry::Rect, progress_ring::STEPS};
 
 use super::lv::{self, Obj};
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProgressBarOptions {
+    pub show_background: bool,
+    pub background_opacity: u8,
+}
+
+impl Default for ProgressBarOptions {
+    fn default() -> Self {
+        Self {
+            show_background: true,
+            background_opacity: 31,
+        }
+    }
+}
+
 pub struct ProgressBar {
     track: Obj,
     fill: Obj,
     width: i32,
     height: i32,
     fill_width: i32,
+    background_opacity: u8,
 }
 
 impl ProgressBar {
@@ -19,8 +35,29 @@ impl ProgressBar {
     ///
     /// # 安全要求
     /// 在 UI 线程调用，且父对象须在使用进度条期间保持有效。
+    #[deprecated(
+        note = "Use ProgressBar::new_with_options. Set background_opacity to 255 for the legacy track."
+    )]
     pub unsafe fn new(parent: Obj, area: Rect, track_color: u32, fill_color: u32) -> Option<Self> {
-        if area.w <= 0 || area.h <= 0 {
+        let options = ProgressBarOptions {
+            background_opacity: 255,
+            ..ProgressBarOptions::default()
+        };
+        unsafe { Self::new_with_options(parent, area, track_color, fill_color, options) }
+    }
+
+    /// Creates an empty bar with independently configurable track visibility.
+    ///
+    /// # Safety
+    /// Call on the UI thread. The parent must remain valid while using the bar.
+    pub unsafe fn new_with_options(
+        parent: Obj,
+        area: Rect,
+        track_color: u32,
+        fill_color: u32,
+        options: ProgressBarOptions,
+    ) -> Option<Self> {
+        if parent.is_null() || area.w <= 0 || area.h <= 0 {
             return None;
         }
         let radius = (area.h / 2) as u32;
@@ -39,13 +76,16 @@ impl ProgressBar {
             lvx_object_clear_flag(track, lv::CLICKABLE | lv::SCROLLABLE);
             lvx_object_clear_flag(fill, lv::CLICKABLE | lv::SCROLLABLE);
             lvx_set_hidden(fill, 1);
-            Some(Self {
+            let bar = Self {
                 track,
                 fill,
                 width: area.w,
                 height: area.h,
                 fill_width: 0,
-            })
+                background_opacity: options.background_opacity,
+            };
+            bar.set_show_background(options.show_background);
+            Some(bar)
         }
     }
 
@@ -66,6 +106,20 @@ impl ProgressBar {
             }
         }
         self.fill_width = width;
+    }
+
+    pub fn set_show_background(&self, show: bool) {
+        // The fill is a child of the track, so change the background's style
+        // without hiding the track object itself.
+        lv::style(
+            self.track,
+            lv::BG_OPA,
+            if show {
+                u32::from(self.background_opacity)
+            } else {
+                0
+            },
+        );
     }
 
     /// 更新底轨与填充层的 RGB 色值。

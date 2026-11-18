@@ -117,16 +117,30 @@ macro_rules! font {
 }
 
 static REGULAR_24: NativeFont = font!("regular-24", b"");
+static REGULAR_22: NativeFont = font!("regular-22", b"");
+static REGULAR_30: NativeFont = font!("regular-30", b"");
 static REGULAR_25: NativeFont = font!("regular-25", b"");
 static REGULAR_26: NativeFont = font!("regular-26", b"");
 static MEDIUM_24: NativeFont = font!("medium-24", b"");
+static MEDIUM_22: NativeFont = font!("medium-22", b"");
 static MEDIUM_25: NativeFont = font!("medium-25", b"");
 static MEDIUM_26: NativeFont = font!("medium-26", b"");
 static MEDIUM_28: NativeFont = font!("medium-28", b"");
 static MEDIUM_30: NativeFont = font!("medium-30", b"");
 static MEDIUM_32: NativeFont = font!("medium-32", b"");
+static MEDIUM_31: NativeFont = font!("medium-31", b"");
+static MEDIUM_34: NativeFont = font!("medium-34", b"");
+static MEDIUM_38: NativeFont = font!("medium-38", b"");
 static DIGITS_40: NativeFont = font!("digits-40", b"0123456789:");
+static NUMBER_36: NativeFont = font!("number-36", b"0123456789:");
+static NUMBER_41: NativeFont = font!("number-41", b"0123456789:");
+static NUMBER_49: NativeFont = font!("number-49", b"0123456789:");
+// Same LinovalSansAeris-Rounded650 source as font::CLOCK, rasterized at 22 px.
+static CLOCK_22: NativeFont = font!("clock-22", b"-0123456789:");
+static TITLE_44: NativeFont = font!("title-44", b"");
 static ROUNDED_44: NativeFont = font!("rounded-44", b" 'TUeimps");
+static ROUNDED_39: NativeFont = font!("rounded-39", b" 'TUeimps");
+static ROUNDED_53: NativeFont = font!("rounded-53", b" 'TUeimps");
 
 impl NativeFont {
     const fn new(data: &'static FontData) -> Self {
@@ -146,18 +160,51 @@ impl NativeFont {
     }
 }
 
+pub(super) fn apply_large_title(label: Obj) {
+    lv::style(
+        label,
+        TEXT_FONT,
+        &TITLE_44 as *const NativeFont as usize as u32,
+    );
+}
+
+pub(super) fn apply_clock(label: Obj) {
+    lv::style(
+        label,
+        TEXT_FONT,
+        &CLOCK_22 as *const NativeFont as usize as u32,
+    );
+}
+
 pub(super) fn apply(label: Obj, font: Font, px: i32) -> i32 {
     let native = match (font, px) {
+        (Font::Small24, 22) => &REGULAR_22,
         (Font::Small24, 25) => &REGULAR_25,
         (Font::Small24, 26) => &REGULAR_26,
+        (Font::Small24, 30) => &REGULAR_30,
         (Font::Small24, _) => &REGULAR_24,
         (Font::Medium24, 25) => &MEDIUM_25,
+        (Font::Medium24, 22) => &MEDIUM_22,
         (Font::Medium24, 26) => &MEDIUM_26,
+        (Font::Medium24, 30) => &MEDIUM_30,
         (Font::Medium24, _) => &MEDIUM_24,
         (Font::Medium28, 30) => &MEDIUM_30,
+        (Font::Medium28, 25) => &MEDIUM_25,
+        (Font::Medium28, 34) => &MEDIUM_34,
         (Font::Medium28, _) => &MEDIUM_28,
         (Font::Demibold32, 40) => &DIGITS_40,
+        (Font::Demibold32, 36) => &NUMBER_36,
+        (Font::Demibold32, 41) => &NUMBER_41,
+        (Font::Demibold32, 49) => &NUMBER_49,
+        (Font::Demibold32, 28) => &MEDIUM_28,
+        (Font::Demibold32, 31) => &MEDIUM_31,
+        (Font::Demibold32, 38) => &MEDIUM_38,
         (Font::Demibold32, _) => &MEDIUM_32,
+        #[cfg(feature = "gallery")]
+        (Font::Rounded44, 39) => &ROUNDED_39,
+        #[cfg(feature = "gallery")]
+        (Font::Rounded44, 53) => &ROUNDED_53,
+        #[cfg(feature = "gallery")]
         (Font::Rounded44, _) => &ROUNDED_44,
     };
     lv::style(

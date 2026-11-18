@@ -2,7 +2,7 @@
 
 use canopus_target_private::*;
 
-use crate::capsule::CapsuleKind;
+use crate::geometry::Rect;
 
 use super::{
     lv::{self, Font, Obj},
@@ -71,8 +71,19 @@ impl<const N: usize> Keyboard<N> {
             }
             key(root, 4, 336, 210, 48, labels.space, on_key, b' ' as usize);
             key(root, 220, 336, 112, 48, labels.delete, on_key, 0);
-            page::button(root, 395, labels.done, CapsuleKind::LargePrimary, on_done);
-            page::right_header(root, labels.title, on_back);
+            let style = page::ButtonStyle::Primary;
+            page::button_with_options(
+                root,
+                Rect::new(0, 395, page::WIDTH, style.height()),
+                labels.done,
+                on_done,
+                0,
+                page::ButtonOptions {
+                    style,
+                    dimmed: false,
+                },
+            );
+            page::header(root, labels.title, on_back, false);
             Some(Self {
                 root,
                 preview,

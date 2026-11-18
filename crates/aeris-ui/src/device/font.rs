@@ -146,7 +146,9 @@ pub unsafe fn fixed(
 }
 
 pub unsafe fn clock(parent: Obj, text: &[u8], area: [i32; 4], align: u32) -> (Obj, bool) {
-    if let Some(object) = unsafe { fixed(parent, CLOCK, text, area, align) } {
+    if let Some(object) =
+        unsafe { fixed_apx(parent, CLOCK, text, area, align, 26, crate::Apx::new(4)) }
+    {
         unsafe { lv::inspect_name(object, c"AerisUI.Clock") };
         return (object, true);
     }
@@ -156,6 +158,52 @@ pub unsafe fn clock(parent: Obj, text: &[u8], area: [i32; 4], align: u32) -> (Ob
         lv::style(label, 94, 3);
     }
     unsafe { lv::inspect_name(label, c"AerisUI.Clock") };
-    lv::text_px(label, width, height, align, Font::Small24, 26);
+    lv::text_apx(
+        label,
+        width,
+        height,
+        align,
+        Font::Small24,
+        crate::Apx::new(4),
+    );
     (label, false)
+}
+
+/// Resolves bitmap typography with the same apx tokens as native labels.
+pub unsafe fn fixed_apx(
+    parent: Obj,
+    bitmap: BitmapFont,
+    text: &[u8],
+    area: [i32; 4],
+    align: u32,
+    source_px: i32,
+    size: crate::Apx,
+) -> Option<Obj> {
+    let px = super::display_profile().viewport.apx(size);
+    let [x, y, width, height] = area;
+    if px <= 0 || source_px <= 0 {
+        return None;
+    }
+    let wrapper = unsafe { clip(parent, width, height, 0) }?;
+    unsafe { lvx_object_align(wrapper, 1, x, y) };
+    let source_width = (width * source_px + px - 1) / px;
+    let source_height = (height * source_px + px - 1) / px;
+    let Some(text) = (unsafe {
+        fixed(
+            wrapper,
+            bitmap,
+            text,
+            [0, 0, source_width, source_height],
+            align,
+        )
+    }) else {
+        unsafe { lvx_object_delete(wrapper) };
+        return None;
+    };
+    let scale = ((px * 256 + source_px / 2) / source_px) as u32;
+    lv::style(text, lv::TRANSFORM_PIVOT_X, 0);
+    lv::style(text, lv::TRANSFORM_PIVOT_Y, 0);
+    lv::style(text, lv::TRANSFORM_SCALE_X, scale);
+    lv::style(text, lv::TRANSFORM_SCALE_Y, scale);
+    Some(wrapper)
 }

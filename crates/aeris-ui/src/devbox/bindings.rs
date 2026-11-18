@@ -16,6 +16,7 @@ pub const LV_STYLE_BORDER_OPA: u32 = 50;
 unsafe extern "C" {
     pub fn gallery_panic(file: *const u8, length: usize, line: u32);
     pub fn gallery_screen() -> Obj;
+    pub fn devbox_device_id(value: *mut u8, capacity: usize) -> usize;
     pub fn gallery_capture_backdrop(root: Obj) -> *const c_void;
     pub fn gallery_set_crop_height(height: i32);
     pub fn gallery_sync_refresh_to_frame();

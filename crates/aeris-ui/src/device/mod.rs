@@ -1,5 +1,27 @@
 //! 小米手环 10 Pro 3.101.043 的原生界面组件。
 
+use crate::geometry::DisplayProfile;
+
+/// Returns the display profile selected before the app's UI is mounted.
+pub fn display_profile() -> DisplayProfile {
+    #[cfg(target_os = "emscripten")]
+    {
+        let mut id = [0; 64];
+        let len = unsafe { crate::devbox::bindings::devbox_device_id(id.as_mut_ptr(), id.len()) };
+        if let Some(profile) = id.get(..len)
+            .and_then(|value| core::str::from_utf8(value).ok())
+            .and_then(DisplayProfile::for_id)
+        {
+            return profile;
+        }
+    }
+    if cfg!(all(feature = "band-11", not(target_arch = "wasm32"))) {
+        DisplayProfile::BAND_11
+    } else {
+        DisplayProfile::BAND_10_PRO
+    }
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 use canopus_abi::CanopusContext;
 #[cfg(not(target_arch = "wasm32"))]
@@ -61,8 +83,16 @@ fn write_image_path<'a>(module_id: &[u8], name: &[u8], output: &'a mut [u8]) -> 
 
 pub mod anim;
 pub mod assets;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "band-10-pro"))]
 mod backdrop;
+#[cfg(all(not(target_arch = "wasm32"), feature = "band-11", not(feature = "band-10-pro")))]
+mod backdrop {
+    pub const IMAGE_SCALE: i32 = 256;
+    pub unsafe fn capture(_: super::lv::Obj) -> *const core::ffi::c_void {
+        core::ptr::null()
+    }
+    pub fn retire() {}
+}
 #[cfg(target_os = "emscripten")]
 #[path = "../devbox/backdrop.rs"]
 mod backdrop;
@@ -78,7 +108,9 @@ pub mod font;
 mod font_assets;
 pub mod header;
 pub mod keyboard;
-#[cfg(all(feature = "gallery", not(target_arch = "wasm32")))]
+pub mod layout;
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(dead_code)]
 mod linoval;
 #[cfg(target_os = "emscripten")]
 #[path = "../devbox/linoval.rs"]
@@ -92,7 +124,9 @@ pub mod page_indicator;
 pub mod progress_bar;
 pub mod progress_ring;
 pub mod rolling_number;
+pub mod round_button;
 pub mod stepped_slider;
+pub mod text_block;
 
 #[cfg(test)]
 mod tests {
