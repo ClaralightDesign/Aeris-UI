@@ -1,6 +1,6 @@
 # Aeris DevBox
 
-DevBox 从应用目录启动独立的浏览器调试器，从项目的正常启动入口运行应用，让你按实际页面路径操作，并检查当前画面的 Aeris UI 和 LVGL 对象。每个项目有自己的预览产物、监听范围和日志。浏览器预览使用手环 10 Pro 的 336 × 480 画布。
+DevBox 从应用目录启动独立的浏览器调试器，从项目的正常启动入口运行应用，让你按实际页面路径操作，并检查当前画面的 Aeris UI 和 LVGL 对象。默认使用手环 10 Pro 的 336 × 480 画布。
 
 ## 启动
 
@@ -32,11 +32,17 @@ WASM 画布的中文使用小米 MiSans 字体。DevBox 在首帧前从小米 CD
 
 可直接拖动预览区空白处，也可按住空格或鼠标中键从画面上拖动。截图和录屏仍使用设备像素。
 
+按住 Option（macOS）或 Alt，在预览区拖动框选。可以从设备外的空白处起拖，也可以用同一个框选中多台设备。框内显示元素轮廓、尺寸和可读取的圆角半径，标签会随框边裁切。标注使用设备像素，松开按键即可返回普通预览。
+
 在「截图与录屏」中选择全屏或区域截图后，可以导出 PNG、WebP 或 JPG。帧率和鼠标指针设置适用于录屏。
+
+文字的字号、apx 来源、实际渲染字号、字体、字重、颜色和行高同时显示在元素侧边栏与画布选择器中。实际渲染字号包含对象及父对象的缩放，滚动收缩的标题会连续更新。字号与行高分别显示；选择器 tooltip 隐藏数值为零的尺寸、边距和不可见背景，黑色文字仍会正常显示。
 
 ## 接入应用
 
 在应用目录放置 `devbox.json`。路径相对于配置文件。Cargo 本地依赖的 Rust 源码自动监听，应用素材可通过 `watch` 补充。
+
+添加 `"devices": ["xiaomi-band-10-pro-3.101.043", "xiaomi-band-11-4.100.155", "round-390", "square-480"]` 可并排预览四种屏幕。第一项是默认设备。点击设备或上方名称即可切换调试工具的作用对象。每个实例有独立的页面、场景和本地存储。应用可用 `aeris_ui::device::display_profile().viewport` 获取当前画布和安全区。
 
 「源代码」面板从 `manifest` 对应的应用包目录开始，可以展开目录并打开多个文件标签。`source` 用于指定默认打开的项目文件，路径仍相对于 `devbox.json`。
 
@@ -120,22 +126,25 @@ agent logs --source runtime
 - `swipe <x1> <y1> <x2> <y2> --preview <id>` 模拟滑动，`back --preview <id>` 发送 Escape。可以用 `scene <id>` 切换已配置场景，或用 `reload` 重启当前场景。预览重建后请重新获取 `previewId` 和坐标。
 - `wait` 默认等待 5 分钟，可通过 `--timeout <毫秒>` 调整。最新构建失败时返回 `BUILD_FAILED`。用 `logs --source build` 查看与失败 `buildId` 对应的日志。保存修复后可用 `wait --after <失败的 buildId>` 等待下一版。
 - `logs --since <cursor>` 从上一次返回的游标继续读取。日志保留最近 500 条，游标早于保留范围时返回 `truncated: true`。运行日志带有 `previewId`。
+- `status` 列出设备 ID。CLI 用 `--device <id>`，MCP 用 `device` 参数指定设备。省略时使用第一台。输入命令的 `previewId` 必须与设备匹配。
 - 命令向 stdout 输出一条带 `version: 1` 的 JSON。失败时以非零退出码和 `error.code` 报告原因。截图路径已存在时返回 `OUTPUT_EXISTS`。运行 `cargo aeris-devbox agent --help` 可查看完整用法。
 
 ## DevBox 内部开发
 
 开发启动器时，可在 Aeris UI 仓库根目录运行 `cargo install --locked --path crates/cargo-aeris-devbox`。
 
-DemoMode 用于开发和回归检查 DevBox 自身的界面。它用 Canvas 倒计时提供可交互画面，便于检查对象树、运行日志、截图和录屏。在 Aeris UI 仓库根目录启动时只需要 Node.js 和 pnpm。
+DemoMode 用 DevBox 的普通 Rust 和 LVGL 构建流程运行真实的 Aeris UI Gallery。示例源码位于库内的 `examples/gallery`，也可通过 `AERIS_GALLERY_DEVBOX_CONFIG` 指定其他 Gallery 配置。按前文准备好 Node.js、pnpm、Rust 浏览器目标、Emscripten 和 LVGL。
 
 ```sh
 pnpm --dir devbox install --frozen-lockfile
 pnpm --dir devbox demo
 ```
 
-打开终端显示的地址后，修改 `devbox/web/demo.ts` 可验证「保存后自动刷新」。
+已安装 Cargo 启动器时，也可以运行 `cargo aeris-devbox --demo`。
 
-也可以在 DemoMode 中验证 Agent CLI。安装上面的 Cargo 启动器后，从仓库根目录运行以下命令，再用上面的 `agent` 函数连接。倒计时的开始／暂停按钮位于 `168,380`，重置位于 `168,430`。
+打开终端显示的地址，DemoMode 默认并排显示小米手环 10 Pro 和小米手环 11。修改 Gallery 的 `examples/gallery/src/gallery.rs` 可验证「保存后自动刷新」，并在工作台的「源代码」面板查看同一份文件。
+
+也可以在 DemoMode 中验证 Agent CLI。安装上面的 Cargo 启动器后，从仓库根目录运行以下命令，再用上面的 `agent` 函数连接。可在对象树查找 `Input Controls` 卡片的位置并点击，再用 `back` 返回。
 
 ```sh
 node devbox/cli.mjs agent install-browser

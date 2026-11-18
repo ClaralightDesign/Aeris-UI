@@ -9,6 +9,7 @@ import { DevToolsTabs } from './devtools-tabs';
 import { useLayoutEffect, useRef, useState } from 'react';
 import { Smooth } from './smooth';
 import { nodeClass, nodeName, type PreviewNode } from './preview';
+import { styleProperties } from './node-properties';
 
 const tabs = ['样式', '已计算样式', '布局', '事件监听器', '属性', '无障碍'];
 
@@ -18,14 +19,11 @@ function color(value: number) {
 }
 
 function NodeDetails({ node, tab }: { node: PreviewNode; tab: string }) {
-  const styles = [
-    ['背景颜色', color(node.background)], ['文字颜色', color(node.foreground)],
-    ['背景透明度', Math.round(node.backgroundOpacity / 2.55) + '%'],
-    ['整体透明度', Math.round(node.opacity / 2.55) + '%'],
-    ['圆角', node.radius + ' px'], ['边框宽度', node.border + ' px'],
-  ] as const;
-  const rows = tab === '样式' ? styles : tab === '已计算样式'
-    ? [...styles, ['文字行高', node.fontHeight + ' px'], ['文字对齐', ['自动', '左对齐', '居中', '右对齐'][node.alignment] ?? '自动']]
+  const styles = styleProperties(node).map((row) => [row.label,
+    row.color === undefined ? row.value : color(row.color)] as const);
+  const classes = node.utilityClasses ? [['工具类', node.utilityClasses] as const] : [];
+  const rows = tab === '样式' ? [...classes, ...styles] : tab === '已计算样式'
+    ? styles
     : tab === '布局' ? [
       ['位置', node.x + ', ' + node.y], ['尺寸', node.width + ' × ' + node.height + ' px'],
       ['内容区位置', node.contentX + ', ' + node.contentY],
@@ -45,10 +43,9 @@ type TreeProps = {
   onCanvasSelectionRevealed: () => void;
   select: (id: number) => void;
   hover: (id?: number) => void;
-  demo?: boolean;
 };
 
-export function Inspector({ nodes, selected, canvasSelection, onCanvasSelectionRevealed, select, hover, demo }: TreeProps) {
+export function Inspector({ nodes, selected, canvasSelection, onCanvasSelectionRevealed, select, hover }: TreeProps) {
   const [query, setQuery] = useState('');
   const [tab, setTab] = useState('样式');
   const [collapsed, setCollapsed] = useState<Set<number>>(() => new Set());
@@ -66,7 +63,7 @@ export function Inspector({ nodes, selected, canvasSelection, onCanvasSelectionR
   }
   collect(selected, selectedPath);
   if (term) {
-    nodes.filter((node) => [nodeName(node), nodeClass(node), node.value].join(' ').toLocaleLowerCase().includes(term))
+    nodes.filter((node) => [nodeName(node), nodeClass(node), node.value, node.utilityClasses].join(' ').toLocaleLowerCase().includes(term))
       .forEach((node) => collect(node, matching));
   }
   const revealFromCanvas = canvasSelection !== undefined && canvasSelection === selected?.id;
@@ -88,7 +85,7 @@ export function Inspector({ nodes, selected, canvasSelection, onCanvasSelectionR
   return <>
     <section className="debug-tree">
       <Smooth radius={7}><div className="debug-search"><MagnifyingGlassIcon size={16} aria-hidden="true" /><Input aria-label="搜索对象" placeholder="搜索" value={query} onChange={(event) => setQuery(event.target.value)} /></div></Smooth>
-      <Smooth radius={7}><div className="debug-tree-scroll" onMouseLeave={() => hover()} aria-label={demo ? '演示对象树' : 'LVGL 对象树'}>
+      <Smooth radius={7}><div className="debug-tree-scroll" onMouseLeave={() => hover()} aria-label="LVGL 对象树">
         {nodes.map((node) => {
           if (filtering && !matching.has(node.id)) return null;
           let depth = 0;
@@ -127,7 +124,7 @@ export function Inspector({ nodes, selected, canvasSelection, onCanvasSelectionR
           <Smooth radius={6}><Button isIconOnly variant="ghost" className="debug-icon" aria-label="查看属性" onPress={() => setTab('属性')}><BracketsAngleIcon className="debug-detail-attributes-icon" size={16} aria-hidden="true" /></Button></Smooth>
         </div></Smooth>
         <Smooth radius={7}><div className="debug-detail-body"><NodeDetails node={selected} tab={tab} /></div></Smooth>
-        <Smooth radius={7}><div className="debug-detail-footer"><span>渲染引擎</span><span><AtIcon size={15} aria-hidden="true" /> {demo ? 'Canvas 2D' : 'LVGL 9.4'}</span></div></Smooth>
+        <Smooth radius={7}><div className="debug-detail-footer"><span>渲染引擎</span><span><AtIcon size={15} aria-hidden="true" /> LVGL 9.4</span></div></Smooth>
       </>}
     </section>
   </>;

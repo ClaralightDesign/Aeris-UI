@@ -10,11 +10,11 @@
   <title>Aeris DevBox</title>
   <style>
     body { margin: 0; min-height: 100svh; display: grid; place-items: center; background: Canvas; color: CanvasText; }
-    #viewport { width: min(336px, 100vw, 70svh); aspect-ratio: 336 / var(--crop-height, 480); overflow: hidden; }
+    #viewport { width: min(var(--screen-width-px, 336px), 100vw, calc(100svh * var(--screen-width, 336) / var(--crop-height, 480))); aspect-ratio: var(--screen-width, 336) / var(--crop-height, 480); overflow: hidden; }
     #viewport[hidden] { display: none; }
     canvas { display: block; width: 100%; height: auto; touch-action: none; }
     html.embedded, html.embedded body { overflow: hidden; overscroll-behavior: none; }
-    html.embedded body { display: block; min-height: 0; background: #000; color: #fff; }
+    html.embedded body { display: block; min-height: 0; background: transparent; color: #fff; }
     html.embedded #viewport { width: 100%; }
     p { font: menu; }
   </style>
@@ -30,6 +30,19 @@
     }
     const viewport = document.getElementById("viewport");
     const canvas = document.getElementById("gallery");
+    const params = new URLSearchParams(location.search);
+    const configuration = JSON.parse(document.getElementById("aeris-displays")?.textContent || "null");
+    const device = configuration?.devices.find(({ id }) => id === params.get("device")) ?? configuration?.devices[0]
+      ?? { id: "xiaomi-band-10-pro-3.101.043", width: 336, height: 480, shape: "rectangle" };
+    canvas.width = device.width;
+    canvas.height = device.height;
+    viewport.style.setProperty("--screen-width", device.width);
+    viewport.style.setProperty("--screen-width-px", device.width + "px");
+    viewport.style.setProperty("--crop-height", device.height);
+    const radius = device.shape === "rectangle" ? 0 : Math.min(device.width, device.height) / 2;
+    const outline = new Path2D();
+    outline.roundRect(0, 0, device.width, device.height, radius);
+    if (radius) canvas.style.clipPath = `inset(0 round ${radius / device.width * 100}% / ${radius / device.height * 100}%)`;
     const context = canvas.getContext("2d", { alpha: false });
     let cropHeight = canvas.height;
     let frame;
@@ -37,17 +50,20 @@
     let lastPaint;
     let frameTime = 0;
     let memoryBytes = 0;
-    const debug = new URLSearchParams(location.search).has("debug") && window.parent !== window;
+    const debug = params.has("debug") && window.parent !== window;
     function notify(type, data = {}) {
       if (debug) window.parent.postMessage({ type, ...data }, location.origin);
     }
     const point = (event) => {
       const bounds = canvas.getBoundingClientRect();
       return [
-        Math.min(canvas.width - 1, Math.max(0, Math.round((event.clientX - bounds.left) * canvas.width / bounds.width))),
-        Math.min(cropHeight - 1, Math.max(0, Math.round((event.clientY - bounds.top) * canvas.height / bounds.height))),
+        Math.min(canvas.width - 1, Math.max(0, Math.floor((event.clientX - bounds.left) * canvas.width / bounds.width))),
+        Math.min(cropHeight - 1, Math.max(0, Math.floor((event.clientY - bounds.top) * canvas.height / bounds.height))),
       ];
     };
+    function contains(x, y) {
+      return context.isPointInPath(outline, x + 0.5, y + 0.5);
+    }
     async function loadChineseFonts() {
       const controller = new AbortController();
       let timeout;
@@ -69,6 +85,9 @@
     const chineseFontsReady = loadChineseFonts();
     var Module = {
       noInitialRun: true,
+      galleryDevice: device,
+      galleryStorage: "aeris:app:" + (document.querySelector('meta[name="aeris-storage"]')?.content || "")
+        + ":" + (configuration?.isolatedStorage ? device.id + ":" : ""),
       galleryCrop(height) {
         if (!Number.isInteger(height) || height < 1 || height > canvas.height) return;
         cropHeight = height;
@@ -119,6 +138,7 @@
               Module._gallery_inspect();
               return {
                 nodes: Module.galleryNodes,
+                width: canvas.width,
                 height: cropHeight,
                 frameTime,
                 memoryBytes,
@@ -129,9 +149,12 @@
               const output = document.createElement("canvas");
               output.width = canvas.width;
               output.height = cropHeight;
-              output.getContext("2d").drawImage(canvas, 0, 0, canvas.width, cropHeight, 0, 0, canvas.width, cropHeight);
+              const capture = output.getContext("2d");
+              capture.clip(outline);
+              capture.drawImage(canvas, 0, 0);
               return output.toDataURL("image/png");
             },
+            contains,
           };
         }
         canvas.addEventListener("wheel", (event) => {
@@ -150,13 +173,16 @@
           const dy = Math.trunc(wheel.y);
           wheel.x -= dx;
           wheel.y -= dy;
-          if (dx || dy) Module._gallery_wheel(...point(event), dx, dy);
+          const position = point(event);
+          if ((dx || dy) && contains(...position)) Module._gallery_wheel(...position, dx, dy);
         }, { passive: false });
         canvas.addEventListener("pointerdown", (event) => {
           if (pointer !== null || event.button !== 0 || !canvas.dataset.ready) return;
+          const position = point(event);
+          if (!contains(...position)) return;
           pointer = event.pointerId;
           canvas.setPointerCapture(pointer);
-          Module._gallery_pointer(...point(event), 0);
+          Module._gallery_pointer(...position, 0);
         });
         canvas.addEventListener("pointermove", (event) => {
           if (pointer === event.pointerId) Module._gallery_pointer(...point(event), 1);
@@ -165,7 +191,8 @@
           canvas.addEventListener(name, (event) => {
             if (pointer !== event.pointerId) return;
             pointer = null;
-            Module._gallery_pointer(...point(event), phase);
+            const position = point(event);
+            Module._gallery_pointer(...position, contains(...position) ? phase : 3);
           });
         }
         void chineseFontsReady.then(() => Module.callMain());

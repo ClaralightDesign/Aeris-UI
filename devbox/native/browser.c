@@ -9,12 +9,12 @@
 #include <string.h>
 
 enum {
-    WIDTH = 336, HEIGHT = 480,
+    STOCK_WIDTH = 336, STOCK_HEIGHT = 480,
     BLUR_SCALE = 4, BLUR_RADIUS = 2, BLUR_BRIGHTNESS = 35,
-    BLUR_WIDTH = WIDTH / BLUR_SCALE, BLUR_HEIGHT = HEIGHT / BLUR_SCALE
+    BLUR_WIDTH = STOCK_WIDTH / BLUR_SCALE, BLUR_HEIGHT = STOCK_HEIGHT / BLUR_SCALE
 };
 
-static uint32_t framebuffer[WIDTH * HEIGHT];
+static uint32_t *framebuffer;
 static lv_indev_t *pointer;
 static lv_point_t point;
 static bool pressed;
@@ -29,7 +29,7 @@ typedef struct Bitmap {
 } Bitmap;
 
 static Bitmap *bitmaps;
-static lv_font_t fonts[5][3];
+static lv_font_t fonts[7][8];
 
 typedef struct {
     const uint8_t *bitmap;
@@ -37,7 +37,7 @@ typedef struct {
     unsigned weight;
 } FontData;
 
-static FontData font_data[5][3];
+static FontData font_data[7][8];
 
 typedef uint8_t Bgr[3];
 
@@ -94,6 +94,26 @@ EM_JS(size_t, browser_parameter, (char *value, size_t capacity), {
 size_t devbox_scene_id(char *value, size_t capacity) {
     return browser_parameter(value, capacity);
 }
+
+EM_JS(size_t, browser_device_id, (char *value, size_t capacity), {
+    const id = Module.galleryDevice.id;
+    if (id.length > capacity) return capacity + 1;
+    HEAPU8.set(new TextEncoder().encode(id), value);
+    return id.length;
+});
+
+size_t devbox_device_id(char *value, size_t capacity) {
+    return browser_device_id(value, capacity);
+}
+
+EM_JS(void, browser_display_size, (int *width, int *height), {
+    HEAP32[width >>> 2] = Module.galleryDevice.width;
+    HEAP32[height >>> 2] = Module.galleryDevice.height;
+});
+
+EM_JS(bool, browser_uses_stock_blur, (void), {
+    return Module.galleryDevice.id === "xiaomi-band-10-pro-3.101.043";
+});
 
 EM_JS(void, show_error, (void), {
     Module.galleryError();
@@ -162,9 +182,10 @@ static void blur_pass(Bgr input[BLUR_HEIGHT][BLUR_WIDTH],
 }
 
 const lv_image_dsc_t *gallery_capture_backdrop(lv_obj_t *root) {
+    if (!browser_uses_stock_blur()) return NULL;
     lv_draw_buf_t *snapshot = lv_snapshot_take(root, LV_COLOR_FORMAT_XRGB8888);
     if (!snapshot) return NULL;
-    if (snapshot->header.w != WIDTH || snapshot->header.h != HEIGHT) {
+    if (snapshot->header.w != STOCK_WIDTH || snapshot->header.h != STOCK_HEIGHT) {
         lv_draw_buf_destroy(snapshot);
         return NULL;
     }
@@ -240,6 +261,10 @@ EM_JS(void, browser_glyph, (unsigned letter, int px, unsigned weight, int16_t *m
     }
 });
 
+static bool is_digits_font(const lv_font_t *font) {
+    return font == &fonts[3][1] || font == &fonts[3][5] || font == &fonts[3][6] || font == &fonts[3][7];
+}
+
 static bool describe_glyph(const lv_font_t *font, lv_font_glyph_dsc_t *glyph, uint32_t letter, uint32_t next) {
     (void)next;
     const FontData *data = font->dsc;
@@ -267,12 +292,18 @@ static bool describe_glyph(const lv_font_t *font, lv_font_glyph_dsc_t *glyph, ui
         return true;
     } else return false;
 
-    if (font == &fonts[3][1]) {
+    if (font == &fonts[6][0]) {
+        if (letter == '-') index = 0;
+        else if (letter >= '0' && letter <= '9') index = letter - '0' + 1;
+        else if (letter == ':') index = 11;
+        else return false;
+    }
+    if (is_digits_font(font)) {
         if (letter == ':') index = 10;
         else if (letter >= '0' && letter <= '9') index = letter - '0';
         else return false;
     }
-    if (font == &fonts[4][0]) {
+    if (font == &fonts[4][0] || font == &fonts[4][1] || font == &fonts[4][2]) {
         const char *repertoire = " 'TUeimps";
         const char *found = letter > 0 && letter < 128 ? strchr(repertoire, letter) : NULL;
         if (!found) return false;
@@ -298,7 +329,8 @@ static const void *read_glyph(lv_font_glyph_dsc_t *glyph, lv_draw_buf_t *buffer)
                       buffer->header.stride, buffer->data);
         return buffer;
     }
-    const size_t count = font == &fonts[3][1] ? 11 : font == &fonts[4][0] ? 9 : 100;
+    const size_t count = font == &fonts[6][0] ? 12 : is_digits_font(font) ? 11 :
+        (font == &fonts[4][0] || font == &fonts[4][1] || font == &fonts[4][2]) ? 9 : 100;
     const uint8_t *pixels = data->bitmap + 2 + 7 * count + glyph->gid.index;
     for (uint16_t y = 0; y < glyph->box_h; y++) {
         memcpy(buffer->data + y * buffer->header.stride, pixels + y * glyph->box_w, glyph->box_w);
@@ -307,12 +339,40 @@ static const void *read_glyph(lv_font_glyph_dsc_t *glyph, lv_draw_buf_t *buffer)
 }
 
 static int font_slot(uint32_t family, int px) {
-    if (family < 2) return px == 25 ? 1 : px == 26 ? 2 : 0;
-    return (family == 2 && px == 30) || (family == 3 && px == 40) ? 1 : 0;
+    if (family < 2) return px == 25 ? 1 : px == 26 ? 2 : px == 22 ? 3 : px == 30 ? 4 : 0;
+    if (family == 2) return px == 30 ? 1 : px == 25 ? 2 : px == 34 ? 3 : 0;
+    if (family == 3) return px == 40 ? 1 : px == 28 ? 2 : px == 31 ? 3 : px == 38 ? 4 : px == 36 ? 5 : px == 41 ? 6 : px == 49 ? 7 : 0;
+    if (family == 4) return px == 39 ? 1 : px == 53 ? 2 : 0;
+    return 0;
+}
+
+EM_JS(int, record_text_style, (uintptr_t id, int family, int pixels, int atlas_pixels), {
+    const styles = Module.galleryTextStyles || (Module.galleryTextStyles = new Map());
+    const first = !styles.has(id);
+    const rounded = family === 4 || family === 6 || family === 3 && [36, 41, 49].includes(atlas_pixels);
+    styles.set(id, { fontSize: pixels, atlasFontSize: atlas_pixels,
+        fontFamily: rounded ? "Linoval Sans Rounded" : "Linoval Sans",
+        fontWeight: rounded ? 650 : [450, 475, 475, 475, 650, 450, 650][family] });
+    return first;
+});
+
+EM_JS(void, forget_text_style, (uintptr_t id), { Module.galleryTextStyles?.delete(id); });
+
+static void text_style_deleted(lv_event_t *event) {
+    forget_text_style((uintptr_t)lv_event_get_current_target(event));
+}
+
+EM_JS(void, record_text_apx, (uintptr_t id, int halves, int pixels), {
+    const style = Module.galleryTextStyles?.get(id);
+    if (style) { style.fontApx = halves / 2; style.fontSize = pixels; }
+});
+
+void gallery_text_apx(lv_obj_t *obj, int halves, int pixels) {
+    record_text_apx((uintptr_t)obj, halves, pixels);
 }
 
 void gallery_font(uint32_t font, int px, const uint8_t *data) {
-    static const unsigned weights[] = { 400, 500, 500, 650, 650 };
+    static const unsigned weights[] = { 400, 500, 500, 650, 650, 400, 650 };
     const int slot = font_slot(font, px);
     FontData *style = &font_data[font][slot];
     *style = (FontData) { .bitmap = data, .px = px, .weight = weights[font] };
@@ -335,6 +395,9 @@ static lv_text_align_t text_align(uint32_t align) {
 
 int gallery_apply_font(lv_obj_t *obj, uint32_t family, int px) {
     const lv_font_t *font = &fonts[family][font_slot(family, px)];
+    const FontData *data = font->dsc;
+    if (record_text_style((uintptr_t)obj, family, px, data->px))
+        lv_obj_add_event_cb(obj, text_style_deleted, LV_EVENT_DELETE, NULL);
     lv_obj_set_style_text_font(obj, font, 0);
     return font->line_height;
 }
@@ -392,11 +455,14 @@ void lvx_object_set_local_style_u32(lv_obj_t *obj, uint32_t prop, uint32_t value
         case 17: lv_obj_set_style_pad_bottom(obj, value, 0); break;
         case 18: lv_obj_set_style_pad_left(obj, value, 0); break;
         case 19: lv_obj_set_style_pad_right(obj, value, 0); break;
+        case 22: lv_obj_set_style_layout(obj, value, 0); break;
         case 29: lv_obj_set_style_bg_opa(obj, value, 0); break;
+        case 44: lv_obj_set_style_radius(obj, value, 0); break;
         case 45: lv_obj_set_style_clip_corner(obj, value, 0); break;
         case 48: lv_obj_set_style_border_width(obj, value, 0); break;
         case 49: lv_obj_set_style_border_color(obj, lv_color_hex(value), 0); break;
         case 50: lv_obj_set_style_border_opa(obj, value, 0); break;
+        case 52: lv_obj_set_style_border_side(obj, value, 0); break;
         case 68: lv_obj_set_style_image_opa(obj, value, 0); break;
         case 69: lv_obj_set_style_image_recolor(obj, lv_color_hex(value), 0); break;
         case 70: lv_obj_set_style_image_recolor_opa(obj, value, 0); break;
@@ -409,6 +475,7 @@ void lvx_object_set_local_style_u32(lv_obj_t *obj, uint32_t prop, uint32_t value
         case 107: lv_obj_set_style_translate_y(obj, (int32_t)value, 0); break;
         case 108: lv_obj_set_style_transform_scale_x(obj, value, 0); break;
         case 109: lv_obj_set_style_transform_scale_y(obj, value, 0); break;
+        case 110: lv_obj_set_style_transform_rotation(obj, (int32_t)value, 0); break;
         case 111:
             lv_obj_set_style_transform_pivot_x(obj, value, 0);
             if (lv_obj_check_type(obj, &lv_image_class)) lv_image_set_pivot_x(obj, value);
@@ -468,7 +535,7 @@ void lvx_object_scroll_to_y(lv_obj_t *obj, int y, uint32_t animated) {
 
 EM_JS(int, storage_read, (const char *key, uint8_t *buffer, size_t capacity), {
     try {
-        const value = localStorage.getItem("aeris:app:" + (document.querySelector('meta[name="aeris-storage"]')?.content || "") + ":" + UTF8ToString(key));
+        const value = localStorage.getItem(Module.galleryStorage + UTF8ToString(key));
         if (value === null) return -2;
         const bytes = atob(value);
         if (!buffer) return bytes.length;
@@ -482,14 +549,14 @@ EM_JS(int, storage_write, (const char *key, const uint8_t *buffer, size_t length
     try {
         let bytes = "";
         for (let i = 0; i < length; i++) bytes += String.fromCharCode(HEAPU8[buffer + i]);
-        localStorage.setItem("aeris:app:" + (document.querySelector('meta[name="aeris-storage"]')?.content || "") + ":" + UTF8ToString(key), btoa(bytes));
+        localStorage.setItem(Module.galleryStorage + UTF8ToString(key), btoa(bytes));
         return 0;
     } catch { return -5; }
 });
 
 EM_JS(int, storage_remove, (const char *key), {
     try {
-        localStorage.removeItem("aeris:app:" + (document.querySelector('meta[name="aeris-storage"]')?.content || "") + ":" + UTF8ToString(key));
+        localStorage.removeItem(Module.galleryStorage + UTF8ToString(key));
         return 0;
     } catch { return -5; }
 });
@@ -675,6 +742,27 @@ EM_JS(void, browser_panic, (const char *file, size_t length, unsigned line), {
 
 void gallery_panic(const char *file, size_t length, unsigned line) { browser_panic(file, length, line); }
 
+EM_JS(void, add_utility_classes, (uintptr_t id, const char *source, size_t len), {
+    if (!Module.galleryUtilityClasses) Module.galleryUtilityClasses = new Map();
+    const values = Module.galleryUtilityClasses;
+    const text = UTF8ToString(source, len, true).trim();
+    const previous = values.get(id);
+    if (text) values.set(id, previous ? previous + " " + text : text);
+});
+
+EM_JS(void, forget_utility_classes, (uintptr_t id), {
+    Module.galleryUtilityClasses?.delete(id);
+});
+
+static void utility_classes_deleted(lv_event_t *event) {
+    forget_utility_classes((uintptr_t)lv_event_get_current_target(event));
+}
+
+void gallery_add_utility_classes(lv_obj_t *obj, const char *source, size_t len, uint32_t first) {
+    if (first) lv_obj_add_event_cb(obj, utility_classes_deleted, LV_EVENT_DELETE, NULL);
+    add_utility_classes((uintptr_t)obj, source, len);
+}
+
 EM_JS(void, inspect_node,
       (uintptr_t id, uintptr_t parent, int kind, const char *class_name, const char *component, const char *value, size_t length,
        int x, int y, int width, int height,
@@ -683,10 +771,12 @@ EM_JS(void, inspect_node,
        int hidden, int clickable, int scrollable, int overflow, unsigned events,
        uint32_t background, uint32_t foreground, unsigned background_opacity, unsigned opacity,
        int radius, int border, int border_top, int border_right, int border_bottom, int border_left,
-       int font_height, int alignment, unsigned checked, unsigned disabled), {
+       int font_height, double text_scale, int alignment, unsigned checked, unsigned disabled), {
+    const textStyle = kind === 1 ? Module.galleryTextStyles?.get(id) : undefined;
     Module.galleryNodes.push({
         id, parent, kind, className: class_name ? UTF8ToString(class_name) : "",
         component: component ? UTF8ToString(component) : "",
+        utilityClasses: Module.galleryUtilityClasses?.get(id),
         value: value ? new TextDecoder().decode(HEAPU8.subarray(value, value + length)) : "",
         x, y, width, height, contentX: content_x, contentY: content_y,
         contentWidth: content_width, contentHeight: content_height,
@@ -695,9 +785,18 @@ EM_JS(void, inspect_node,
         hidden: !!hidden, clickable: !!clickable, scrollable: !!scrollable, overflow: !!overflow, events,
         background: background >>> 0, foreground: foreground >>> 0, backgroundOpacity: background_opacity,
         opacity, radius, border, fontHeight: font_height, alignment,
+        ...(textStyle && { fontSize: textStyle.fontSize, fontApx: textStyle.fontApx,
+            fontFamily: textStyle.fontFamily, fontWeight: textStyle.fontWeight,
+            renderedFontSize: textStyle.atlasFontSize * text_scale }),
+        renderedLineHeight: font_height * text_scale,
         checked: !!checked, disabled: !!disabled,
     });
 });
+
+static bool is_nine_patch_slice(lv_obj_t *obj) {
+    const char *name = lv_obj_get_name(obj);
+    return name && strcmp(name, "AerisUI.NinePatchSlice") == 0;
+}
 
 static void inspect_tree(lv_obj_t *obj, lv_obj_t *parent, bool hidden) {
     lv_area_t area, content;
@@ -709,10 +808,21 @@ static void inspect_tree(lv_obj_t *obj, lv_obj_t *parent, bool hidden) {
     const char *value = kind == 1 ? lv_label_get_text(obj) : NULL;
     const lv_font_t *font = lv_obj_get_style_text_font(obj, LV_PART_MAIN);
     const char *class_name = parent ? lv_obj_get_class(obj)->name : "lv_screen";
+    const uint32_t count = lv_obj_get_child_count(obj);
+    for (uint32_t index = 0; index < count; index++) {
+        if (is_nine_patch_slice(lv_obj_get_child(obj, index))) {
+            class_name = "NinePatch";
+            break;
+        }
+    }
     const char *name = lv_obj_get_name(obj);
     const char *component = name && strncmp(name, "AerisUI.", 8) == 0 ? name : NULL;
     const lv_border_side_t border_sides = lv_obj_get_style_border_side(obj, LV_PART_MAIN);
     const int border = lv_obj_get_style_border_width(obj, LV_PART_MAIN);
+    double text_scale = 1.0;
+    for (lv_obj_t *ancestor = obj; ancestor; ancestor = lv_obj_get_parent(ancestor)) {
+        text_scale *= lv_obj_get_style_transform_scale_y(ancestor, LV_PART_MAIN) / 256.0;
+    }
     inspect_node((uintptr_t)obj, (uintptr_t)parent, kind, class_name, component, value, value ? strlen(value) : 0,
                  area.x1, area.y1, lv_area_get_width(&area), lv_area_get_height(&area),
                  content.x1, content.y1, lv_area_get_width(&content), lv_area_get_height(&content),
@@ -726,11 +836,11 @@ static void inspect_tree(lv_obj_t *obj, lv_obj_t *parent, bool hidden) {
                  lv_obj_get_style_radius(obj, LV_PART_MAIN), border,
                  border_sides & LV_BORDER_SIDE_TOP ? border : 0, border_sides & LV_BORDER_SIDE_RIGHT ? border : 0,
                  border_sides & LV_BORDER_SIDE_BOTTOM ? border : 0, border_sides & LV_BORDER_SIDE_LEFT ? border : 0,
-                 font ? font->line_height : 0, lv_obj_get_style_text_align(obj, LV_PART_MAIN),
+                 font ? font->line_height : 0, text_scale, lv_obj_get_style_text_align(obj, LV_PART_MAIN),
                  lv_obj_has_state(obj, LV_STATE_CHECKED), lv_obj_has_state(obj, LV_STATE_DISABLED));
-    uint32_t count = lv_obj_get_child_count(obj);
     for (uint32_t index = 0; index < count; index++) {
-        inspect_tree(lv_obj_get_child(obj, index), obj, hidden);
+        lv_obj_t *child = lv_obj_get_child(obj, index);
+        if (!is_nine_patch_slice(child)) inspect_tree(child, obj, hidden);
     }
 }
 
@@ -752,11 +862,28 @@ static void flush_display(lv_display_t *display, const lv_area_t *area, uint8_t 
 static void draw(void) { lv_timer_handler(); }
 
 int main(void) {
+    int width, height;
+    browser_display_size(&width, &height);
+    if (width <= 0 || width > 1024 || height <= 0 || height > 1024) {
+        show_error();
+        return 1;
+    }
+    const size_t buffer_size = sizeof(*framebuffer) * width * height;
+    framebuffer = malloc(buffer_size);
+    if (!framebuffer) {
+        show_error();
+        return 1;
+    }
     lv_init();
     lv_tick_set_cb(browser_ticks);
-    lv_display_t *display = lv_display_create(WIDTH, HEIGHT);
+    lv_display_t *display = lv_display_create(width, height);
+    if (!display) {
+        free(framebuffer);
+        show_error();
+        return 1;
+    }
     lv_display_set_color_format(display, LV_COLOR_FORMAT_ARGB8888);
-    lv_display_set_buffers(display, framebuffer, NULL, sizeof(framebuffer), LV_DISPLAY_RENDER_MODE_FULL);
+    lv_display_set_buffers(display, framebuffer, NULL, buffer_size, LV_DISPLAY_RENDER_MODE_FULL);
     lv_display_set_flush_cb(display, flush_display);
 
     pointer = lv_indev_create();

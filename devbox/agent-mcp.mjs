@@ -5,6 +5,7 @@ import { z } from 'zod';
 
 const pixel = z.int().nonnegative().describe('Device pixel coordinate, measured from the top-left of the canvas.');
 const preview = z.string().min(1).describe('previewId from the latest snapshot or screenshot.');
+const device = z.string().min(1).optional().describe('Device ID from status. Defaults to the first configured device.');
 const readOnly = { readOnlyHint: true, openWorldHint: false };
 const mutatesPreview = { destructiveHint: false, openWorldHint: false };
 
@@ -31,7 +32,7 @@ const tools = [
 export async function serveMcp(req, res, body, dispatch, accessSignal) {
   const server = new McpServer({ name: 'aeris-devbox', version: '1.0.0' });
   for (const [command, description, inputSchema, annotations] of tools) {
-    server.registerTool('devbox_' + command, { description, inputSchema, annotations }, async (args, { signal }) => {
+    server.registerTool('devbox_' + command, { description, inputSchema: { device, ...inputSchema }, annotations }, async (args, { signal }) => {
       const { timeoutMs, x, y, x1, y1, x2, y2, ...params } = args;
       const deadline = AbortSignal.timeout(timeoutMs ?? 45_000);
       const cancelled = AbortSignal.any([accessSignal, signal, deadline]);

@@ -16,13 +16,21 @@ export function createAgent({ buildState, directory }) {
   let cursor = 0;
   let url;
   let browser;
-  let context;
-  let current;
-  let openingBuildId;
-  let failure;
-  let sceneId;
+  let launch;
+  const previews = new Map();
   let stopped = false;
-  let operations = Promise.resolve();
+
+  function deviceFor(id) {
+    const { devices } = buildState();
+    const device = id === undefined ? devices[0] : devices.find((entry) => entry.id === id);
+    if (!device) throw error('INVALID_ARGUMENT', '设备不存在。');
+    return device;
+  }
+
+  function deviceState(id) {
+    if (!previews.has(id)) previews.set(id, { operations: Promise.resolve() });
+    return previews.get(id);
+  }
 
   function start(port, cliEnabled) {
     url = 'http://127.0.0.1:' + port;
@@ -59,17 +67,19 @@ export function createAgent({ buildState, directory }) {
     };
   }
 
-  function log(source, buildId, previewId, level, text) {
-    entries.push({ cursor: ++cursor, source, buildId, previewId, level, text: String(text).slice(0, 16_384) });
+  function log(source, buildId, previewId, level, text, device) {
+    entries.push({ cursor: ++cursor, source, buildId, previewId, level, text: String(text).slice(0, 16_384), device });
     if (entries.length > 500) entries.shift();
   }
 
-  function status() {
-    const { title, scenes, state, buildId, publishedBuildId, queuedBuildId } = buildState();
+  function status(device = deviceFor()) {
+    const { title, scenes, devices, state, buildId, publishedBuildId, queuedBuildId } = buildState();
+    const { current, failure, openingBuildId, sceneId } = deviceState(device.id);
     const preview = current?.buildId === publishedBuildId ? current : undefined;
     const failed = failure?.buildId === publishedBuildId ? failure : undefined;
     return {
-      title, scenes, scene: scenes.some(({ id }) => id === sceneId) ? sceneId : scenes[0]?.id ?? null,
+      title, scenes, devices, device: device.id,
+      scene: scenes.some(({ id }) => id === sceneId) ? sceneId : scenes[0]?.id ?? null,
       build: { state, buildId, publishedBuildId, queuedBuildId },
       preview: {
         state: preview ? 'ready' : failed ? 'failed' : openingBuildId === publishedBuildId ? 'loading' : 'idle',
@@ -88,8 +98,7 @@ export function createAgent({ buildState, directory }) {
     }
   }
 
-  async function getContext() {
-    if (context) return context;
+  async function launchBrowser() {
     const { chromium } = await import('playwright');
     try {
       browser = await chromium.launch({ timeout, handleSIGINT: false, handleSIGTERM: false, handleSIGHUP: false });
@@ -101,46 +110,53 @@ export function createAgent({ buildState, directory }) {
       throw error('PREVIEW_FAILED', '无法启动 Chromium。', { reason: cause.message });
     }
     browser.once('disconnected', () => {
-      context = undefined;
-      if (current) {
-        failure = { buildId: current.buildId, scene: current.scene, error: error('PREVIEW_FAILED', 'Chromium 已退出。') };
-        current = undefined;
+      launch = undefined;
+      for (const state of previews.values()) {
+        state.context = undefined;
+        if (!state.current) continue;
+        const { buildId, scene } = state.current;
+        state.failure = { buildId, scene, error: error('PREVIEW_FAILED', 'Chromium 已退出。') };
+        state.current = undefined;
       }
     });
-    context = await browser.newContext({ viewport: { width: 336, height: 480 } });
-    return context;
+    return browser;
   }
 
-  async function load(buildId, scene, force) {
+  async function getContext(device, state) {
+    if (!launch) launch = launchBrowser().catch((cause) => { launch = undefined; throw cause; });
+    const running = await launch;
+    return state.context ??= await running.newContext({ viewport: { width: device.width, height: device.height } });
+  }
+
+  async function load(device, state, buildId, scene, force) {
     assertBuild(buildId);
+    const { current, failure } = state;
     if (!force && current?.buildId === buildId && current.scene === scene) return current;
     if (!force && failure?.buildId === buildId && failure.scene === scene) throw failure.error;
-    const previous = current;
-    current = undefined;
-    failure = undefined;
+    state.current = undefined;
+    state.failure = undefined;
     const id = randomBytes(12).toString('hex');
-    openingBuildId = buildId;
+    state.openingBuildId = buildId;
     let page;
     let runtimeFailed = false;
     function previewFailed(message) {
       runtimeFailed = true;
-      log('runtime', buildId, id, 'error', message);
-      if (current?.id !== id) return;
-      current = undefined;
-      failure = { buildId, scene, error: error('PREVIEW_FAILED', message) };
+      log('runtime', buildId, id, 'error', message, device.id);
+      if (state.current?.id !== id) return;
+      state.current = undefined;
+      state.failure = { buildId, scene, error: error('PREVIEW_FAILED', message) };
       void page.close().catch(() => {});
     }
     try {
-      await previous?.page.close();
+      await current?.page.close();
       assertBuild(buildId);
-      page = await (await getContext()).newPage();
+      page = await (await getContext(device, state)).newPage();
       page.setDefaultTimeout(timeout);
-      // Both renderers publish their application logs to the preview parent.
       await page.exposeFunction('devboxAgentEvent', (level, text) => {
         if (level === null) {
           previewFailed('应用预览已停止，请查看运行日志。');
         } else if (typeof level === 'string' && typeof text === 'string') {
-          log('runtime', buildId, id, level, text);
+          log('runtime', buildId, id, level, text, device.id);
         }
       });
       await page.addInitScript(() => {
@@ -155,9 +171,9 @@ export function createAgent({ buildState, directory }) {
           }
         });
       });
-      page.on('pageerror', (cause) => log('runtime', buildId, id, 'error', cause.message));
+      page.on('pageerror', (cause) => log('runtime', buildId, id, 'error', cause.message, device.id));
       page.once('crash', () => previewFailed('预览页面崩溃。'));
-      const params = new URLSearchParams({ scene: scene ?? '', debug: '1', agentBuild: String(buildId) });
+      const params = new URLSearchParams({ scene: scene ?? '', device: device.id, debug: '1', agentBuild: String(buildId) });
       await page.goto(url + '/devbox-agent-preview?' + params, { waitUntil: 'domcontentloaded', timeout });
       const iframe = await page.locator('iframe').elementHandle();
       const frame = await iframe.contentFrame();
@@ -171,25 +187,25 @@ export function createAgent({ buildState, directory }) {
       await ready.dispose();
       if (readyState !== 'ready' || runtimeFailed) throw error('PREVIEW_FAILED', '应用预览未能启动，请查看运行日志。');
       assertBuild(buildId);
-      current = { id, buildId, page, frame, scene };
-      return current;
+      state.current = { id, buildId, page, frame, scene, device: device.id };
+      return state.current;
     } catch (cause) {
       await page?.close().catch(() => {});
       assertBuild(buildId);
       const problem = typeof cause.code === 'string' ? cause
         : cause.name === 'TimeoutError' ? error('TIMEOUT', '等待预览首帧超时，请查看运行日志。')
           : error('PREVIEW_FAILED', '无法加载应用预览。', { reason: cause.message });
-      if (problem.code !== 'BROWSER_NOT_INSTALLED') failure = { buildId, scene, error: problem };
-      log('runtime', buildId, id, 'error', problem.message);
+      if (problem.code !== 'BROWSER_NOT_INSTALLED') state.failure = { buildId, scene, error: problem };
+      log('runtime', buildId, id, 'error', problem.message, device.id);
       throw problem;
     } finally {
-      openingBuildId = undefined;
+      state.openingBuildId = undefined;
     }
   }
 
-  function serialize(operation) {
-    const result = operations.then(operation);
-    operations = result.catch(() => {});
+  function serialize(state, operation) {
+    const result = state.operations.then(operation);
+    state.operations = result.catch(() => {});
     return result;
   }
 
@@ -201,7 +217,7 @@ export function createAgent({ buildState, directory }) {
       return { width, height: snapshot.height, png: window.aerisDebugger.screenshot().split(',')[1] };
     }, screenshot);
     assertBuild(preview.buildId);
-    return { ...result, buildId: preview.buildId, previewId: preview.id };
+    return { ...result, device: preview.device, buildId: preview.buildId, previewId: preview.id };
   }
 
   async function input(preview, command, points, signal) {
@@ -221,13 +237,19 @@ export function createAgent({ buildState, directory }) {
         !nonnegativeInteger(point) || point >= (index % 2 === 0 ? width : height))) {
         throw error('INVALID_ARGUMENT', '坐标超出设备画布范围。', { width, height });
       }
+      const hitsDisplay = await preview.frame.evaluate((coordinates) => {
+        const contains = window.aerisDebugger.contains;
+        return !contains || contains(coordinates[0], coordinates[1])
+          && (coordinates.length === 2 || contains(coordinates[2], coordinates[3]));
+      }, points);
+      if (!hitsDisplay) throw error('INVALID_ARGUMENT', '坐标超出设备屏幕轮廓。', { width, height });
       const bounds = await canvas.boundingBox();
       if (!bounds) throw error('PREVIEW_FAILED', '预览画布不可见。');
       const scaleX = bounds.width / width;
       const canvasHeight = await canvas.evaluate((element) => element.height);
       const scaleY = bounds.height / canvasHeight;
       const [x1, y1, x2, y2] = points;
-      const move = (x, y) => preview.page.mouse.move(bounds.x + x * scaleX, bounds.y + y * scaleY);
+      const move = (x, y) => preview.page.mouse.move(bounds.x + (x + 0.5) * scaleX, bounds.y + (y + 0.5) * scaleY);
       const mouse = preview.page.mouse;
       await move(x1, y1);
       assertBuild(preview.buildId);
@@ -247,35 +269,39 @@ export function createAgent({ buildState, directory }) {
     // Let LVGL paint the result before the next command can capture it.
     await preview.frame.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
     assertBuild(preview.buildId);
-    return { buildId: preview.buildId, previewId: preview.id };
+    return { device: preview.device, buildId: preview.buildId, previewId: preview.id };
   }
 
   async function execute(request, signal) {
     signal.throwIfAborted();
     const { command } = request;
-    if (command === 'status') return status();
+    const device = deviceFor(request.device);
+    const state = deviceState(device.id);
+    if (command === 'status') return status(device);
     if (command === 'logs') {
       const { since = 0, source } = request;
       if (!nonnegativeInteger(since) || (source !== undefined && !['build', 'runtime'].includes(source))) {
         throw error('INVALID_ARGUMENT', '无效的日志查询。');
       }
       return { cursor, truncated: since < (entries[0]?.cursor ?? 1) - 1,
-        entries: entries.filter((entry) => entry.cursor > since && (!source || entry.source === source)) };
+        entries: entries.filter((entry) => entry.cursor > since && (!source || entry.source === source)
+          && (!entry.device || entry.device === device.id)) };
     }
     const after = request.after ?? 0;
     if (command === 'wait' && !nonnegativeInteger(after)) throw error('INVALID_ARGUMENT', '无效的构建编号。');
     const pending = ({ state, buildId }) => (state !== 'ready' && state !== 'failed') || buildId <= after;
-    if (command === 'wait' && pending(buildState())) return { ...status(), pending: true };
-    return serialize(async () => {
+    if (command === 'wait' && pending(buildState())) return { ...status(device), pending: true };
+    return serialize(state, async () => {
       signal.throwIfAborted();
       const build = buildState();
-      if (command === 'wait' && pending(build)) return { ...status(), pending: true };
+      if (command === 'wait' && pending(build)) return { ...status(device), pending: true };
       const { buildId, scenes } = build;
       assertBuild(buildId);
+      const { current, sceneId } = state;
       let scene = scenes.some(({ id }) => id === sceneId) ? sceneId : scenes[0]?.id;
       if (['tap', 'swipe', 'back'].includes(command)) {
         if (!current || current.buildId !== buildId || current.id !== request.preview) {
-          throw error('STALE_PREVIEW', '预览已更换，请重新读取对象树或截图。', status());
+          throw error('STALE_PREVIEW', '预览已更换，请重新读取对象树或截图。', status(device));
         }
         return input(current, command, request.points, signal);
       }
@@ -286,27 +312,31 @@ export function createAgent({ buildState, directory }) {
       if (!['wait', 'snapshot', 'screenshot', 'scene', 'reload'].includes(command)) {
         throw error('INVALID_ARGUMENT', '未知命令。');
       }
-      sceneId = scene;
+      state.sceneId = scene;
       let preview;
       try {
-        preview = await load(buildId, scene, command === 'scene' || command === 'reload');
+        preview = await load(device, state, buildId, scene, command === 'scene' || command === 'reload');
       } catch (cause) {
-        if (command === 'wait' && cause.code === 'BUILD_PENDING') return { ...status(), pending: true };
+        if (command === 'wait' && cause.code === 'BUILD_PENDING') return { ...status(device), pending: true };
         throw cause;
       }
       signal.throwIfAborted();
       if (command === 'snapshot' || command === 'screenshot') return observe(preview, command === 'screenshot');
-      return { ...status(), buildId, previewId: preview.id, ...(command === 'wait' && { pending: false }) };
+      return { ...status(device), buildId, previewId: preview.id, ...(command === 'wait' && { pending: false }) };
     });
   }
 
   async function serve(path, req, res) {
     if (path === '/devbox-agent-preview' && req.method === 'GET') {
-      const src = '/preview.html' + new URL(req.url, url).search.replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;');
+      const address = new URL(req.url, url);
+      let device;
+      try { device = deviceFor(address.searchParams.get('device') ?? undefined); }
+      catch { res.writeHead(404).end(); return; }
+      const src = '/preview.html' + address.search.replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;');
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.setHeader('Cache-Control', 'no-store');
       res.end('<!doctype html><style>body{margin:0}iframe{border:0;display:block}</style>'
-        + '<iframe width="336" height="480" title="DevBox Preview" src="' + src + '"></iframe>');
+        + `<iframe width="${device.width}" height="${device.height}" title="DevBox Preview" src="${src}"></iframe>`);
       return;
     }
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -384,7 +414,7 @@ export function createAgent({ buildState, directory }) {
     try {
       await browser?.close();
     } finally {
-      await operations;
+      await Promise.all([...previews.values()].map(({ operations }) => operations));
       // A launch already in progress may have created the browser after close began.
       await browser?.close();
     }

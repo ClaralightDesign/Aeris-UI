@@ -1,0 +1,13 @@
+[package]
+name = "aeris-component-previews"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+aeris-ui = { path = "../../crates/aeris-ui", features = ["devbox"] }

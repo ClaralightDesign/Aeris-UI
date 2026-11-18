@@ -11,7 +11,7 @@ use std::{
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 const TARGET: &str = "wasm32-unknown-emscripten";
-const USAGE: &str = "用法：cargo aeris-devbox [devbox.json]\n      cargo aeris-devbox agent --help";
+const USAGE: &str = "用法：cargo aeris-devbox [devbox.json | --demo]\n      cargo aeris-devbox agent --help";
 const AGENT_CLIENT: &str = include_str!("agent-client.mjs");
 const RUNTIME_FILES: &[&str] = &[
     "cli.mjs",
@@ -74,6 +74,8 @@ fn launch() -> Result<()> {
     if args.next().is_some() {
         return Err(USAGE.into());
     }
+    let demo = config == Path::new("--demo");
+    let config = if demo { gallery_config()? } else { config };
     let config = config.canonicalize().map_err(|error| {
         format!(
             "无法打开 {}：{error}。请在应用目录运行，或传入配置文件路径。",
@@ -146,10 +148,34 @@ fn launch() -> Result<()> {
     if let Some(action) = agent_action {
         node.arg("agent").arg(action);
     }
-    node.arg(config)
-        .env("AERIS_DEVBOX_SOURCE_ROOT", source)
+    if demo {
+        node.arg("--demo").env("AERIS_GALLERY_DEVBOX_CONFIG", config);
+    } else {
+        node.arg(config);
+    }
+    node.env("AERIS_DEVBOX_SOURCE_ROOT", source)
         .env("CARGO", cargo);
     run_node(node)
+}
+
+fn gallery_config() -> Result<PathBuf> {
+    if let Some(config) = env::var_os("AERIS_GALLERY_DEVBOX_CONFIG") {
+        return Ok(config.into());
+    }
+    let cwd = env::current_dir()?;
+    cwd.ancestors()
+        .flat_map(|parent| {
+            [
+                parent.join("examples/gallery/devbox.json"),
+                parent.join("Aeris-UI/examples/gallery/devbox.json"),
+            ]
+        })
+        .find(|candidate| candidate.is_file())
+        .or_else(|| {
+            let bundled = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/gallery/devbox.json");
+            bundled.is_file().then_some(bundled)
+        })
+        .ok_or_else(|| "找不到 examples/gallery/devbox.json。请设置 AERIS_GALLERY_DEVBOX_CONFIG。".into())
 }
 
 fn aeris_dependency<'a>(metadata: &'a Value, manifest: &Path) -> Result<&'a Value> {

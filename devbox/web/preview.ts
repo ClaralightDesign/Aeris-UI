@@ -6,6 +6,7 @@ export type PreviewNode = {
   kind: number;
   className?: string;
   component?: string;
+  utilityClasses?: string;
   value: string;
   x: number;
   y: number;
@@ -29,6 +30,12 @@ export type PreviewNode = {
   radius: number;
   border: number;
   fontHeight: number;
+  fontSize?: number;
+  fontApx?: number;
+  renderedFontSize?: number;
+  renderedLineHeight?: number;
+  fontFamily?: string;
+  fontWeight?: number;
   alignment: number;
   checked: boolean;
   disabled: boolean;
@@ -42,10 +49,24 @@ export type Snapshot = {
 };
 
 export type PreviewWindow = Window & {
-  aerisDebugger?: { snapshot: () => Snapshot | null; screenshot: () => string | null };
+  aerisDebugger?: { snapshot: () => Snapshot | null; screenshot: () => string | null; contains?: (x: number, y: number) => boolean };
 };
 
-export const width = 336;
+export type DeviceProfile = {
+  id: string;
+  name: string;
+  width: number;
+  height: number;
+  shape: 'rectangle' | 'capsule' | 'circle';
+};
+
+export const defaultDevice: DeviceProfile = {
+  id: 'xiaomi-band-10-pro-3.101.043',
+  name: '小米手环 10 Pro',
+  width: 336,
+  height: 480,
+  shape: 'rectangle',
+};
 const kindName = ['lv_screen', 'lv_label', 'lv_image', 'lv_obj'];
 
 export function nodeClass(node: PreviewNode) {
@@ -53,7 +74,7 @@ export function nodeClass(node: PreviewNode) {
 }
 
 export function nodeName(node: PreviewNode) {
-  return node.component || nodeClass(node);
+  return node.className === 'NinePatch' ? node.className : node.component || nodeClass(node);
 }
 
 export function pickNode(nodes: PreviewNode[], x: number, y: number) {

@@ -5,18 +5,18 @@ import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSyn
 import { createHash } from 'node:crypto';
 import { once } from 'node:events';
 import { createServer as createHttpServer } from 'node:http';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
-import { setTimeout as delay } from 'node:timers/promises';
 import { createServer } from 'vite';
 import { parse } from 'smol-toml';
 import { createFavicon } from './native/favicon.mjs';
+import { embedDisplays, loadDisplayProfiles, selectDisplayProfiles } from './native/devices.mjs';
 
 const root = fileURLToPath(new URL('.', import.meta.url));
 if (process.argv.includes('--help')) {
-  console.log('用法：cargo aeris-devbox [devbox.json]\n      cargo aeris-devbox agent --help');
+  console.log('用法：cargo aeris-devbox [devbox.json | --demo]\n      cargo aeris-devbox agent --help');
   process.exit(0);
 }
 const [, , entry, action, configArg] = process.argv;
@@ -29,12 +29,13 @@ if (entry === 'agent' && action === 'install-browser') {
 const agentMode = entry === 'agent' && action === 'serve';
 const configInput = agentMode ? configArg : entry;
 const demo = configInput === '--demo';
-const demoPreview = join(root, 'web/demo.html');
-const demoSource = join(root, 'web/demo.ts');
-const configPath = resolve(configInput ?? 'devbox.json');
+const aerisRoot = resolve(process.env.AERIS_DEVBOX_SOURCE_ROOT ?? resolve(root, '..'));
+const configPath = demo
+  ? resolve(process.env.AERIS_GALLERY_DEVBOX_CONFIG ?? join(aerisRoot, 'examples/gallery/devbox.json'))
+  : resolve(configInput ?? 'devbox.json');
 const project = resolve(configPath, '..');
 const renderFavicon = createFavicon(join(root, 'web/assets'), project, demo);
-const aerisRoot = resolve(process.env.AERIS_DEVBOX_SOURCE_ROOT ?? resolve(root, '..'));
+const profiles = loadDisplayProfiles(aerisRoot);
 const cacheParents = [resolve(aerisRoot, '..'), project, resolve(project, '..'), resolve(project, '../..'), resolve(project, '../../..')];
 const toolCache = (leaf, marker) => cacheParents.map((parent) => resolve(parent, leaf))
   .find((directory) => existsSync(join(directory, marker)));
@@ -96,9 +97,6 @@ function serveSource(url, res) {
     res.end(JSON.stringify(data));
   };
   const finish = (status) => { res.statusCode = status; res.end(); };
-  if (demo) {
-    return url.searchParams.get('directory') === '' ? json({ entries: [] }) : finish(404);
-  }
   const settings = config();
   const packageRoot = dirname(resolve(project, settings.manifest));
   const sourceRoot = realpathSync(packageRoot);
@@ -127,6 +125,9 @@ function serveSource(url, res) {
 }
 
 function config() {
+  if (demo && !existsSync(configPath)) {
+    throw new Error('找不到库内 examples/gallery/devbox.json。请检查 Aeris UI 源码，或设置 AERIS_GALLERY_DEVBOX_CONFIG。');
+  }
   const data = JSON.parse(readFileSync(configPath, 'utf8'));
   if (typeof data.title !== 'string' || !data.title.trim()
       || typeof data.manifest !== 'string' || !data.manifest.trim()
@@ -141,6 +142,7 @@ function config() {
       || (data.watch !== undefined && (!Array.isArray(data.watch) || data.watch.some((path) => typeof path !== 'string')))) {
     throw new Error('devbox.json 需要 title 和 manifest，场景使用唯一的 id 和 title。');
   }
+  selectDisplayProfiles(profiles, data.devices);
   return data;
 }
 
@@ -155,9 +157,12 @@ function resolveTools() {
   if (emcc === join(bundledTools, 'emcc') && !env.EMSDK_CONFIG) {
     env.EMSDK_CONFIG = join(defaultCache, 'emsdk/.emscripten');
   }
-  if (!env.RUSTUP_HOME && existingRust) env.RUSTUP_HOME = join(existingRust, 'rustup');
+  const useBundledRustup = existingRust && (!env.RUSTUP_HOME || resolve(env.RUSTUP_HOME) === join(homedir(), '.rustup'));
+  if (useBundledRustup) env.RUSTUP_HOME = join(existingRust, 'rustup');
   if (!env.CARGO_HOME && existingRust && existsSync(join(existingRust, 'cargo'))) env.CARGO_HOME = join(existingRust, 'cargo');
-  const cargo = env.CARGO ?? 'cargo';
+  // Cargo subcommands can inherit an absolute Cargo binary from a different toolchain.
+  // Use the rustup proxy when selecting the bundled toolchain.
+  const cargo = useBundledRustup && env.CARGO?.split(sep).includes('toolchains') ? 'cargo' : env.CARGO ?? 'cargo';
   // 预览使用自己的目标目录和链接配置，允许从固件项目的根目录启动。
   delete env.CARGO_ENCODED_RUSTFLAGS;
   delete env.RUSTFLAGS;
@@ -188,6 +193,8 @@ function projectContext(settings) {
   return {
     title: settings.title,
     scenes: (settings.scenes ?? []).map(({ id, title }) => ({ id, title })),
+    devices: selectDisplayProfiles(profiles, settings.devices),
+    isolatedStorage: settings.devices !== undefined,
   };
 }
 
@@ -222,9 +229,9 @@ function dependencyInfo(metadata, rootPackage) {
 }
 
 function agentBuildState() {
-  const { title, scenes } = publishedProject;
+  const { title, scenes, devices } = publishedProject;
   return {
-    title, scenes,
+    title, scenes, devices,
     state: queuedBuildId !== null ? 'queued' : publishedBuildId === null && buildStatus === 'ready' ? 'building' : buildStatus,
     buildId,
     publishedBuildId,
@@ -269,14 +276,13 @@ async function run(command, args, options, capture = false) {
   });
 }
 
-const watcherPaths = new Set([configPath, join(aerisRoot, 'crates')]);
+const watcherPaths = new Set([configPath, join(aerisRoot, 'crates'), join(root, 'native')]);
 function watch(paths) {
   paths.forEach((path) => watcherPaths.add(path));
   server?.watcher.add(paths);
 }
 
 async function build() {
-  if (demo) return projectInfo({ title: 'DevBox Demo' });
   const settings = config();
   const manifest = resolve(project, settings.manifest);
   watch([manifest, resolve(manifest, '../src'), resolve(manifest, '../Canopus.toml'),
@@ -317,7 +323,8 @@ async function build() {
   await run('make', ['-s', '-j', process.env.AERIS_BUILD_JOBS ?? '8', 'EMCC=' + emcc, 'EMAR=' + emar],
     { cwd: nativeBuild, env });
 
-  const staging = join(buildRoot, 'preview.tmp.html');
+  const stagingDirectory = mkdtempSync(join(buildRoot, 'preview-'));
+  const staging = join(stagingDirectory, 'preview.html');
   try {
     await run(emcc, ['-Os', '-flto', '-sSINGLE_FILE=1', '-sEXPORTED_RUNTIME_METHODS=UTF8ToString,callMain', '-sALLOW_MEMORY_GROWTH=1', '-sSTACK_SIZE=131072',
       '--shell-file', join(root, 'native/shell.html'), 'browser.o',
@@ -331,7 +338,7 @@ async function build() {
     appendFileSync(staging, '\n<!--\n' + license + '\n-->\n');
     renameSync(staging, preview);
   } finally {
-    rmSync(staging, { force: true });
+    rmSync(stagingDirectory, { recursive: true, force: true });
   }
   return {
     ...info,
@@ -351,14 +358,8 @@ async function runQueued() {
   queuedClean = false;
   queuedRefresh = false;
   updateStatus('building');
-  const simulate = demo && refresh;
   try {
-    if (simulate) {
-      await delay(1500);
-      if (stopped) return;
-      if (Math.random() < 0.5) throw new Error('Demo：模拟构建失败，已保留当前预览。');
-    }
-    if (clean && !demo) {
+    if (clean) {
       rmSync(cargoTarget, { recursive: true, force: true });
       rmSync(native, { recursive: true, force: true });
       log('info', '已清理 DevBox 构建缓存，开始重新构建。\n');
@@ -372,7 +373,6 @@ async function runQueued() {
     if (!stopped) {
       log('error', error.message + '\n');
       updateStatus('failed', refresh);
-      if (simulate) await delay(1500);
     }
   } finally {
     active = false;
@@ -422,13 +422,13 @@ async function serve(req, res, next) {
       queue({ clean: mode === 'clean', refresh: true });
       res.writeHead(202).end();
     } else if (url.pathname === '/devbox-favicon.png') {
-      const icon = await renderFavicon(demo ? undefined : config());
+      const icon = await renderFavicon(config());
       res.writeHead(200, { 'Content-Type': 'image/png' }).end(icon);
     } else if (url.pathname === '/devbox-project.json') {
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
-      const { title, scenes } = demo ? publishedProject : projectContext(config());
-      res.end(JSON.stringify({ title, scenes, app: publishedProject.app, tools: publishedProject.tools,
-        status: buildStatus, logs: history, hasPreview: demo || existsSync(preview), demo }));
+      const { title, scenes, devices } = publishedProject;
+      res.end(JSON.stringify({ title, scenes, devices, app: publishedProject.app, tools: publishedProject.tools,
+        status: buildStatus, logs: history, hasPreview: existsSync(preview), demo }));
     } else if (url.pathname === '/devbox-source') {
       if (!/^(localhost|127\.0\.0\.1)(:\d+)?$/i.test(req.headers.host ?? '')) {
         res.statusCode = 403;
@@ -442,22 +442,20 @@ async function serve(req, res, next) {
         res.writeHead(409).end();
         return;
       }
-      if (demo) {
-        const template = readFileSync(demoPreview, 'utf8');
-        const html = agentMode || url.searchParams.has('agentBuild') ? template : await server.transformIndexHtml(req.url, template);
-        res.setHeader('Content-Type', 'text/html; charset=utf-8');
-        res.setHeader('Cache-Control', 'no-store');
-        res.end(html);
-        return;
-      }
       if (!existsSync(preview)) {
         res.statusCode = 503;
         res.end();
         return;
       }
+      const device = url.searchParams.get('device');
+      const { devices, isolatedStorage } = publishedProject;
+      if (device !== null && !devices.some(({ id }) => id === device)) {
+        res.writeHead(404).end();
+        return;
+      }
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.setHeader('Cache-Control', 'no-store');
-      res.end(readFileSync(preview));
+      res.end(embedDisplays(readFileSync(preview, 'utf8'), devices, isolatedStorage));
     } else next();
   } catch {
     res.statusCode = 500;
@@ -492,31 +490,21 @@ async function shutdown() {
 }
 
 try {
-  publishedProject = projectInfo(demo ? { title: 'DevBox Demo' } : config());
+  publishedProject = projectInfo(config());
   const { createAgent } = await import('./agent.mjs');
   agent = createAgent({ buildState: agentBuildState, directory: agentDirectory });
   if (agentMode) httpServer = createHttpServer();
-  if (demo) {
-    buildStatus = 'ready';
-    buildId = publishedBuildId = 1;
-  }
   const port = agentMode ? 0 : Number(process.env.AERIS_DEVBOX_PORT ?? 5173);
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('AERIS_DEVBOX_PORT 需要有效的端口号。');
-  server = await createServer({ root, cacheDir: demo && !agentMode ? undefined : join(buildRoot, 'vite'),
+  server = await createServer({ root, cacheDir: join(buildRoot, 'vite'),
     server: { host: '127.0.0.1', port, ...(agentMode && { middlewareMode: true, hmr: false, ws: false }) }, plugins: [{
     name: 'aeris-devbox',
-    hotUpdate({ type, file, modules }) {
-      if (!demo || this.environment.name !== 'client' || type !== 'update' || file !== demoSource) return;
-      for (const module of modules) this.environment.moduleGraph.invalidateModule(module);
-      return [];
-    },
     configureServer(vite) {
       vite.middlewares.use(serve);
-      if (demo) watcherPaths.add(demoSource);
       vite.watcher.add([...watcherPaths]);
       vite.watcher.on('all', (event, path) => {
         if (!['add', 'change', 'unlink'].includes(event)) return;
-        if (demo ? path === demoSource : [...watcherPaths].some((entry) => path === entry || path.startsWith(entry + sep))) queue();
+        if ([...watcherPaths].some((entry) => path === entry || path.startsWith(entry + sep))) queue();
       });
     },
   }] });
@@ -531,7 +519,7 @@ try {
     await server.listen();
     server.printUrls();
   }
-  if (!demo) queue();
+  queue();
   agent.start((httpServer ?? server.httpServer).address().port, agentMode);
   agentReady = true;
 } catch (error) {

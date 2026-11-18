@@ -100,6 +100,7 @@ button[data-slot="smooth-corners"]:focus-visible { outline: 2px solid #69b6ff; o
   border-radius: 8px;
 }
 .debug-preview-panel {
+  --debug-preview-accent: #69b6ff;
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -184,6 +185,20 @@ button[data-slot="smooth-corners"]:focus-visible { outline: 2px solid #69b6ff; o
   position: relative;
   transform-origin: top left;
 }
+.debug-device-label {
+  position: absolute;
+  top: -34px;
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  padding: 4px 9px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: inherit;
+}
+.debug-device-label[aria-pressed=true] {
+  background: color-mix(in srgb, currentColor 16%, transparent);
+}
 .debug-device-frame {
   position: relative;
   width: 100%;
@@ -195,11 +210,21 @@ button[data-slot="smooth-corners"]:focus-visible { outline: 2px solid #69b6ff; o
   cursor: auto;
 }
 .debug-device-frame iframe { display: block; border: 0; width: 100%; height: 100%; position: absolute; inset: 0; }
+.debug-device-capsule-outline {
+  position: absolute;
+  inset: 0 0 auto;
+  box-sizing: border-box;
+  border: 1px solid rgb(255 255 255 / 50%);
+  border-radius: 9999px;
+  pointer-events: none;
+}
 .debug-stage {
+  --debug-layout-line: color-mix(in srgb, var(--debug-preview-accent) 58%, #174985);
+  --debug-layout-label-bg: color-mix(in srgb, var(--debug-preview-accent) 48%, #06346d);
   --debug-box-margin: #f4a45c;
   --debug-box-border: #f1ce6a;
   --debug-box-padding: #8cca7c;
-  --debug-box-content: #69b6ff;
+  --debug-box-content: var(--debug-preview-accent);
 }
 .debug-stage [data-region=margin] { --debug-box-color: var(--debug-box-margin); }
 .debug-stage [data-region=border] { --debug-box-color: var(--debug-box-border); }
@@ -300,7 +325,7 @@ button[data-slot="smooth-corners"]:focus-visible { outline: 2px solid #69b6ff; o
 }
 .debug-ruler[data-axis=x] .debug-ruler-tick em { bottom: 10px; left: 50%; transform: translateX(-50%); }
 .debug-ruler[data-axis=y] .debug-ruler-tick em { top: 50%; right: 10px; writing-mode: vertical-rl; transform: translateY(-50%) rotate(180deg); }
-.debug-ruler-cursor { position: absolute; background: #69b6ff; }
+.debug-ruler-cursor { position: absolute; background: var(--debug-preview-accent); }
 .debug-ruler[data-axis=x] .debug-ruler-cursor { top: 0; bottom: 0; width: 1px; }
 .debug-ruler[data-axis=y] .debug-ruler-cursor { left: 0; right: 0; height: 1px; }
 .debug-ruler-value {
@@ -323,6 +348,69 @@ button[data-slot="smooth-corners"]:focus-visible { outline: 2px solid #69b6ff; o
 .debug-ruler[data-axis=x] .debug-ruler-size { right: 3px; bottom: 9px; }
 .debug-ruler[data-axis=y] .debug-ruler-size { left: 3px; bottom: 3px; }
 .debug-pick-surface { position: absolute; inset: 0; cursor: crosshair; touch-action: none; }
+.debug-layout-surface {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  cursor: crosshair;
+  touch-action: none;
+  user-select: none;
+}
+.debug-layout-paper {
+  position: absolute;
+  background: rgb(0 0 0 / 34%);
+  pointer-events: none;
+  -webkit-backdrop-filter: saturate(.22);
+  backdrop-filter: saturate(.22);
+}
+.debug-layout-drawing {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.debug-layout-drawing rect { vector-effect: non-scaling-stroke; }
+.debug-layout-node {
+  fill: none;
+  stroke: var(--debug-layout-line);
+  stroke-width: 1px;
+}
+.debug-layout-node[data-role=group] { stroke-dasharray: 3 2; }
+.debug-layout-node[data-role=text] { stroke-opacity: .75; }
+.debug-layout-marquee {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px solid var(--debug-layout-line);
+  pointer-events: none;
+}
+.debug-layout-label,
+.debug-layout-badge {
+  font-family: 'Linoval Sans', system-ui, sans-serif;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+.debug-layout-label rect { fill: var(--debug-layout-label-bg); }
+.debug-layout-label text { fill: #fff; }
+.debug-layout-badge {
+  position: absolute;
+  z-index: 4;
+  pointer-events: none;
+  transform: translateX(-50%);
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  color: #fff;
+  font-size: 13px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+.debug-layout-badge > div {
+  padding: 4px 9px;
+  border-radius: 7px;
+  background: var(--debug-layout-label-bg);
+}
 .debug-update {
   position: absolute;
   left: 50%;
@@ -349,6 +437,25 @@ button[data-slot="smooth-corners"]:focus-visible { outline: 2px solid #69b6ff; o
   height: 40px;
   border-radius: 14px;
 }
+.debug-update.debug-layout-hint {
+  bottom: calc(16px + var(--debug-layout-hint-offset, 0px));
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: max-content;
+  height: auto;
+  min-height: 40px;
+  padding: 6px 12px;
+  border-radius: 14px;
+  font: 500 13px/16px 'MiSans', -apple-system, BlinkMacSystemFont, 'PingFang SC', system-ui, sans-serif;
+  pointer-events: none;
+}
+.debug-layout-hint > svg { color: var(--debug-preview-accent); }
+.debug-layout-hint[data-capture-notice=true] { --debug-layout-hint-offset: 36px; }
+.debug-layout-hint[data-build=building] { --debug-layout-hint-offset: 44px; }
+.debug-layout-hint[data-build=failed] { --debug-layout-hint-offset: 48px; }
+.debug-layout-hint[data-build=failed][data-compact=true] { --debug-layout-hint-offset: 80px; }
 @keyframes debug-update-in {
   from { opacity: 0; transform: translate(-50%, 8px); }
   to { opacity: 1; transform: translate(-50%, 0); }

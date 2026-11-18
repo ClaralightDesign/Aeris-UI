@@ -4,8 +4,8 @@ import { resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
 const usage = `用法：cargo aeris-devbox agent install-browser [devbox.json]
-      cargo aeris-devbox agent serve [devbox.json]
-      cargo aeris-devbox agent <命令> --session <文件>
+      cargo aeris-devbox agent serve [devbox.json | --demo]
+      cargo aeris-devbox agent <命令> --session <文件> [--device <ID>]
 
 status
 wait [--after <buildId>] [--timeout <毫秒>]
@@ -40,7 +40,7 @@ function parse([command, ...args]) {
     }
     const name = arg.slice(2);
     const value = args[++index];
-    if (!['session', ...options[command]].includes(name) || name in params || !value || value.startsWith('--')) {
+    if (!['session', 'device', ...options[command]].includes(name) || name in params || !value || value.startsWith('--')) {
       fail('INVALID_ARGUMENT', '无效参数：' + arg);
     }
     params[name] = value;

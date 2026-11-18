@@ -18,17 +18,18 @@ import { RectangleDashedIcon } from '@phosphor-icons/react/dist/csr/RectangleDas
 import { RulerIcon } from '@phosphor-icons/react/dist/csr/Ruler';
 import { SidebarSimpleIcon } from '@phosphor-icons/react/dist/csr/SidebarSimple';
 import { TerminalWindowIcon } from '@phosphor-icons/react/dist/csr/TerminalWindow';
-import { Fragment, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode } from 'react';
+import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import Scritto from '@scritto/react';
 import { Inspector } from './inspector';
 import { DevToolsTabs } from './devtools-tabs';
 import { BoxHighlight, ElementCard } from './element-overlay';
+import { LayoutLens, LayoutSelection, layoutAreaForDevice, useLayoutModifier, type Point as LayoutPoint, type Rect as LayoutRect } from './layout-lens';
 import { Console, logLevel, type Log } from './console';
 import { Sources } from './sources';
 import { Smooth, popoverStroke } from './smooth';
 import { MAX_ZOOM, MIN_ZOOM, useCanvasViewport } from './canvas-viewport';
-import { nodeName, pickNode, width, type PreviewWindow, type Snapshot } from './preview';
+import { defaultDevice, nodeName, pickNode, type DeviceProfile, type PreviewWindow, type Snapshot } from './preview';
 import logo from './assets/VerisDevBox.svg';
 import picker from './assets/PaperPlaneTilt.svg';
 import recordFull from './assets/RecordFull.svg';
@@ -63,6 +64,7 @@ type Status = 'ready' | 'building' | 'failed';
 type Project = {
   title: string;
   scenes: { id: string; title: string }[];
+  devices?: DeviceProfile[];
   status: Status;
   hasPreview: boolean;
   logs: Omit<Log, 'source'>[];
@@ -95,9 +97,10 @@ function PreviewInfoRows({ rows }: { rows: readonly (readonly [string, ReactNode
     <div key={`${label}-${index}`}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>;
 }
 
-function PreviewInfo({ project, scene, height, zoom, status, agentSettings }: {
+function PreviewInfo({ project, scene, device, height, zoom, status, agentSettings }: {
   project?: Project;
   scene?: string;
+  device: DeviceProfile;
   height: number;
   zoom: number;
   status: Status;
@@ -114,35 +117,35 @@ function PreviewInfo({ project, scene, height, zoom, status, agentSettings }: {
     const matches = tools?.dependencies?.filter((item) => item.name === name) ?? [];
     return matches.length ? matches.map(({ version, revision, local }) => [
       label, <span title={revision}>{version}{revision ? ` · ${revision.slice(0, 8)}` : local ? ' · 本地' : ''}</span>,
-    ] as const) : [[label, demo ? '演示模式未加载' : '—'] as const];
+    ] as const) : [[label, '—'] as const];
   });
   const groups: { title: string; rows: (readonly [string, ReactNode])[] }[] = [
     { title: '设备', rows: [
-      ['机型', '小米手环 10 Pro'],
-      ['屏幕分辨率', `${width} × 480 px`],
-      ...(height === 480 ? [] : [['预览区域', `${width} × ${height} px`] as const]),
+      ['机型', device.name],
+      ['屏幕分辨率', `${device.width} × ${device.height} px`],
+      ...(height === device.height ? [] : [['预览区域', `${device.width} × ${height} px`] as const]),
       ['画布缩放', `${zoom.toFixed(1)}%`],
     ] },
     { title: '应用', rows: [
       ['名称', project?.title ?? '等待项目加载'],
       ...(scene ? [['场景', scene] as const] : []),
-      ...(demo ? [['运行模式', '内部演示'] as const] : [
-        ['应用 ID', app?.id ?? '—'] as const,
-        ...(app?.module && app.module !== app.id ? [['模块 ID', app.module] as const] : []),
-        ['应用版本', app?.version ?? '—'] as const,
-        ...(app?.versionCode !== undefined ? [['构建编号', app.versionCode] as const] : []),
-        ...(app?.package ? [['Cargo 包', app.package] as const] : []),
-        ...(app?.targets?.length ? [['声明的设备目标', app.targets.join('、')] as const] : []),
-        ['构建状态', { ready: '就绪', building: '构建中', failed: '构建失败' }[status]] as const,
-      ]),
+      ...(demo ? [['运行模式', 'Gallery Demo'] as const] : []),
+      ['应用 ID', app?.id ?? '—'],
+      ...(app?.module && app.module !== app.id ? [['模块 ID', app.module] as const] : []),
+      ['应用版本', app?.version ?? '—'],
+      ...(app?.versionCode !== undefined ? [['构建编号', app.versionCode] as const] : []),
+      ...(app?.package ? [['Cargo 包', app.package] as const] : []),
+      ...(app?.targets?.length ? [['声明的设备目标', app.targets.join('、')] as const] : []),
+      ['构建状态', { ready: '就绪', building: '构建中', failed: '构建失败' }[status]],
     ] },
   ];
   const toolRows: (readonly [string, ReactNode])[] = [
     ['DevBox', tools?.devbox ?? '—'],
     ...dependencies,
     ...(app?.abi ? [['应用 ABI 版本', app.abi] as const] : []),
-    ['渲染引擎', demo ? 'Canvas 2D' : `LVGL${tools?.lvgl ? ` ${tools.lvgl}` : ''}`],
-    ...(demo ? [] : [['运行目标', 'wasm32-unknown-emscripten'] as const, ['Emscripten', tools?.emscripten ?? '—'] as const]),
+    ['渲染引擎', `LVGL${tools?.lvgl ? ` ${tools.lvgl}` : ''}`],
+    ['运行目标', 'wasm32-unknown-emscripten'],
+    ['Emscripten', tools?.emscripten ?? '—'],
   ];
   return <>
     <PreviewDetails title="设备、应用与版本">
@@ -173,7 +176,6 @@ const RULER_LABEL = 50;
 const RULER_EDGE = 40;
 const INSPECTOR_MIN = 278;
 const INSPECTOR_PULL = 14;
-const RULER_TICKS = Array.from({ length: Math.floor(width / RULER_STEP) + 1 }, (_, index) => index * RULER_STEP);
 const placements = ['left', 'right', 'bottom'] as const;
 const narrowInspectorQuery = '(max-width: 760px)';
 type Placement = typeof placements[number];
@@ -359,7 +361,7 @@ function Hint({ label, keys, children, hidden }: { label: string; keys?: ReactNo
 }
 
 function Ruler({ axis, size, cursor }: { axis: 'x' | 'y'; size: number; cursor?: number }) {
-  const ticks = axis === 'x' ? RULER_TICKS : Array.from({ length: Math.floor(size / RULER_STEP) + 1 }, (_, index) => index * RULER_STEP);
+  const ticks = Array.from({ length: Math.floor(size / RULER_STEP) + 1 }, (_, index) => index * RULER_STEP);
   const place = (value: number) => axis === 'x' ? { left: value / size * 100 + '%' } : { top: value / size * 100 + '%' };
   const edge = cursor === undefined ? undefined : cursor < RULER_EDGE ? 'start' : cursor > size - RULER_EDGE ? 'end' : 'center';
   return <div className="debug-ruler" data-axis={axis} aria-hidden="true">
@@ -378,14 +380,23 @@ function Ruler({ axis, size, cursor }: { axis: 'x' | 'y'; size: number; cursor?:
 export function Component() {
   const [project, setProject] = useState<Project>();
   const [projectError, setProjectError] = useState(false);
-  const [sceneId, setSceneId] = useState(() => new URLSearchParams(location.search).get('scene'));
-  const scene = project?.scenes.find((item) => item.id === sceneId) ?? project?.scenes[0];
+  const [initialScene] = useState(() => new URLSearchParams(location.search).get('scene'));
+  const [deviceId, setDeviceId] = useState<string>();
+  const [scenes, setScenes] = useState<Record<string, string>>({});
+  const devices = project?.devices ?? [defaultDevice];
+  const device = devices.find(({ id }) => id === deviceId) ?? devices[0];
+  const { width } = device;
+  const sceneFor = (id: string) => project?.scenes.find((item) => item.id === (scenes[id] ?? initialScene)) ?? project?.scenes[0];
+  const scene = sceneFor(device.id);
   const [hasPreview, setHasPreview] = useState(false);
   const [sourceRevision, setSourceRevision] = useState(0);
-  const [snapshot, setSnapshot] = useState<Snapshot>(EMPTY_SNAPSHOT);
+  const [deviceSnapshots, setDeviceSnapshots] = useState<Record<string, { url: string; snapshot: Snapshot }>>({});
+  const [deviceCrops, setDeviceCrops] = useState<Record<string, { url: string; height: number }>>({});
   const [generation, setGeneration] = useState(0);
+  const [reloads, setReloads] = useState<Record<string, number>>({});
   const [status, setStatus] = useState<Status>('ready');
-  const [logs, setLogs] = useState<Log[]>([]);
+  const [allLogs, setLogs] = useState<Log[]>([]);
+  const logs = useMemo(() => allLogs.filter((entry) => !entry.device || entry.device === device.id), [allLogs, device.id]);
   const [notice, setNotice] = useState('');
   const [view, setView] = useState<View>('元素');
   const [inspectorOpen, setInspectorOpen] = useState(true);
@@ -440,6 +451,9 @@ export function Component() {
   const savedTimer = useRef<number>(undefined);
   const stage = useRef<HTMLDivElement>(null);
   const preview = useRef<HTMLIFrameElement>(null);
+  const frames = useRef(new Map<string, HTMLIFrameElement>());
+  const activateDevice = useRef<(id: string) => void>(() => {});
+  activateDevice.current = changeDevice;
   const refreshEnabled = useRef(autoRefresh);
 
   useEffect(() => {
@@ -481,7 +495,6 @@ export function Component() {
     try {
       const response = await fetch('/devbox-build?' + new URLSearchParams({ mode }), { method: 'POST' });
       if (!response.ok) throw new Error();
-      if (project?.demo) setControlsOpen(false);
     } catch {
       setNotice('无法请求重新构建');
     } finally {
@@ -489,9 +502,56 @@ export function Component() {
     }
   }
 
-  const previewParams = new URLSearchParams({ scene: scene?.id ?? '', debug: '1', revision: String(generation) });
-  const previewUrl = '/preview.html?' + previewParams;
+  function urlFor(id: string) {
+    const params = new URLSearchParams({ scene: sceneFor(id)?.id ?? '', device: id, debug: '1',
+      revision: generation + '-' + (reloads[id] ?? 0) });
+    return '/preview.html?' + params;
+  }
+  const previewUrl = urlFor(device.id);
+  const savedSnapshot = deviceSnapshots[device.id];
+  const snapshot = savedSnapshot?.url === previewUrl ? savedSnapshot.snapshot
+    : { ...EMPTY_SNAPSHOT, height: previewHeight(device, previewUrl) };
+  function previewHeight(profile: DeviceProfile, url: string) {
+    const crop = deviceCrops[profile.id];
+    return crop?.url === url ? Math.min(crop.height, profile.height) : profile.height;
+  }
+  useLayoutEffect(() => {
+    preview.current = frames.current.get(device.id) ?? null;
+  }, [device.id, previewUrl, hasPreview, project]);
   const { viewport, scale, space, dragging, reset, fit, zoomIn, zoomOut, setPercent } = useCanvasViewport(stage, preview, frameReady, previewUrl);
+  const altHeld = useLayoutModifier(frames, frameReady);
+  const layoutMode = altHeld && hasPreview && !!project && !areaMode && !space && !dragging && !resizing;
+  const [layoutArea, setLayoutArea] = useState<LayoutRect>();
+  useEffect(() => { if (!layoutMode) setLayoutArea(undefined); }, [layoutMode]);
+  const gap = 36;
+  const comparison = devices.length > 1;
+  const totalWidth = devices.reduce((sum, profile) => sum + profile.width, 0) + gap * (devices.length - 1);
+  const maxHeight = Math.max(...devices.map((profile) => profile.height));
+  const deviceList = devices.map(({ id }) => id).join(',');
+  function fitDevices() {
+    if (comparison) fit(totalWidth + 36, maxHeight + 66);
+    else fit(width, snapshot.height);
+  }
+  function deviceOffset(id: string) {
+    let offset = -totalWidth / 2;
+    for (const profile of devices) {
+      if (profile.id === id) return (offset + profile.width / 2) * scale;
+      offset += profile.width + gap;
+    }
+    return 0;
+  }
+  function trackLayoutPoint(point?: LayoutPoint) {
+    if (!point) {
+      setMeasure(undefined);
+      return;
+    }
+    const x = point.x - deviceOffset(device.id) / scale + width / 2;
+    const y = point.y + snapshot.height / 2;
+    setMeasure(x >= 0 && x <= width && y >= 0 && y <= snapshot.height ? { x, y } : undefined);
+  }
+  useLayoutEffect(() => {
+    if (hasPreview && comparison) fitDevices();
+  }, [hasPreview, deviceList]);
   const zoomLabel = `${viewport.percent.toFixed(1)}%`;
   const previousZoom = useRef(viewport.percent);
   const [zoomExpanded, setZoomExpanded] = useState(false);
@@ -509,7 +569,7 @@ export function Component() {
   }, [viewport.percent, viewport.showZoomFeedback, zoomOpen]);
   const renderer = () => (preview.current?.contentWindow as PreviewWindow | null)?.aerisDebugger;
   const selected = snapshot.nodes.find((node) => node.id === selectedId) ?? snapshot.nodes[0];
-  const inspected = inspectorOpen && view === '元素' && !areaMode
+  const inspected = inspectorOpen && view === '元素' && !areaMode && !layoutMode
     ? snapshot.nodes.find((node) => node.id === hoverId && !node.hidden) : undefined;
   const highlighted = inspected ?? (ruler ? selected : undefined);
   const errorCount = logs.filter((entry) => entry.level === 'error').length;
@@ -520,9 +580,9 @@ export function Component() {
 
   useEffect(() => {
     const previous = document.title;
-    document.title = 'Aeris DevBox';
+    document.title = project?.title ? `${project.title} / Aeris DevBox` : 'Aeris DevBox';
     return () => { document.title = previous; };
-  }, []);
+  }, [project?.title]);
 
   useEffect(() => {
     refreshEnabled.current = autoRefresh;
@@ -547,31 +607,38 @@ export function Component() {
   }, [preferredPlacement, inspectorWidth]);
 
   useEffect(() => {
-    setSnapshot(EMPTY_SNAPSHOT);
     select(undefined);
     setCanvasSelection(undefined);
     hover(undefined);
-    const timer = window.setInterval(() => {
+    function inspect() {
       const next = renderer()?.snapshot();
-      if (next) setSnapshot(next);
-    }, 250);
+      if (next) setDeviceSnapshots((previous) => ({ ...previous, [device.id]: { url: previewUrl, snapshot: next } }));
+    }
+    inspect();
+    const timer = window.setInterval(inspect, 250);
     return () => window.clearInterval(timer);
   }, [previewUrl]);
 
   useEffect(() => {
     function onMessage(event: MessageEvent) {
-      if (event.origin !== location.origin || event.source !== preview.current?.contentWindow) return;
+      if (event.origin !== location.origin) return;
+      const source = [...frames.current].find(([, frame]) => frame.contentWindow === event.source);
+      if (!source) return;
+      const [device, frame] = source;
       const data = event.data;
       if (data?.type === 'aeris-debug-log' && typeof data.text === 'string') {
-        append({ level: logLevel(data.level, data.text), source: '运行', text: data.text });
+        append({ level: logLevel(data.level, data.text), source: '运行', text: data.text, device });
       } else if (data?.type === 'aeris-debug-error') {
-        append({ level: 'error', source: '运行', text: '无法加载组件预览。' });
+        append({ level: 'error', source: '运行', text: '无法加载组件预览。', device });
+      } else if (data?.type === 'aeris-preview-size' && Number.isInteger(data.height) && data.height > 0) {
+        const url = frame.getAttribute('src');
+        if (url) setDeviceCrops((previous) => ({ ...previous, [device]: { url, height: data.height } }));
       }
     }
     window.addEventListener('message', onMessage);
     const hot = import.meta.hot;
     const startup = new AbortController();
-    async function loadProject(initial = false) {
+    async function loadProject(initial = false, refresh = false) {
       try {
         const response = await fetch('/devbox-project.json', { signal: startup.signal, cache: 'no-store' });
         if (!response.ok) throw new Error();
@@ -583,6 +650,8 @@ export function Component() {
           setStatus(data.status);
           setHasPreview(data.hasPreview);
           setLogs(data.logs.map((entry) => ({ ...entry, level: logLevel(entry.level, entry.text), source: '构建' })));
+        } else if (refresh) {
+          setGeneration((value) => value + 1);
         }
       } catch {
         if (!startup.signal.aborted) setProjectError(true);
@@ -596,8 +665,7 @@ export function Component() {
       if (next === 'ready') {
         setSourceRevision((value) => value + 1);
         setHasPreview(true);
-        if (refresh || refreshEnabled.current) setGeneration((value) => value + 1);
-        void loadProject();
+        void loadProject(false, refresh || refreshEnabled.current);
       }
     }
     function buildLog({ level, text }: { level: Log['level']; text: string }) {
@@ -631,6 +699,7 @@ export function Component() {
     const x = (event.clientX - rect.left) * width / rect.width;
     const y = (event.clientY - rect.top) * snapshot.height / rect.height;
     if (ruler) setMeasure({ x, y });
+    if (renderer()?.contains?.(Math.floor(x), Math.floor(y)) === false) return;
     return pickNode(snapshot.nodes, x, y);
   }
 
@@ -698,7 +767,16 @@ export function Component() {
     const url = new URL(location.href);
     url.searchParams.set('scene', id);
     history.replaceState(null, '', url);
-    setSceneId(id);
+    setScenes((previous) => ({ ...previous, [device.id]: id }));
+  }
+
+  function changeDevice(id: string) {
+    if (id === device.id) return;
+    if (session.current) void stopRecording(true);
+    setPicking(false);
+    setAreaMode(undefined);
+    setArea(undefined);
+    setDeviceId(id);
   }
 
   function openView(next: View) {
@@ -810,12 +888,19 @@ export function Component() {
       if (session.current !== sessionValue) return;
       const current = sourceCanvas();
       if (current) {
+        context.save();
+        if (device.shape !== 'rectangle') {
+          context.beginPath();
+          context.roundRect(-area.x, -area.y, device.width, device.height, Math.min(device.width, device.height) / 2);
+          context.clip();
+        }
         context.drawImage(current, area.x, area.y, area.width, area.height, 0, 0, canvas.width, canvas.height);
         const point = pointer.current;
         if (sessionValue.cursor && point && point.x >= area.x && point.y >= area.y
           && point.x <= area.x + area.width && point.y <= area.y + area.height) {
           drawPointer(context, point.x - area.x, point.y - area.y);
         }
+        context.restore();
       }
       sessionValue.drawFrame = requestAnimationFrame(draw);
     };
@@ -1227,7 +1312,7 @@ export function Component() {
                   {[
                     { label: '放大', key: '+', action: zoomIn },
                     { label: '缩小', key: '−', action: zoomOut },
-                    { label: '适应画布', action: () => fit(width, snapshot.height) },
+                    { label: '适应画布', action: fitDevices },
                     { label: '缩放至 50%', action: () => setPercent(50) },
                     { label: '缩放至 100%', key: '0', action: reset },
                     { label: '缩放至 200%', action: () => setPercent(200) },
@@ -1352,7 +1437,7 @@ export function Component() {
                 <Smooth radius={20} stroke={popoverStroke}><Popover.Dialog className="debug-popover debug-preview-menu" aria-label="设置">
                   <div className="debug-preview-actions">
                     <Hint label="重载"><Smooth radius={12}><Button isIconOnly variant="ghost" aria-label="重载"
-                      onPress={() => setGeneration((value) => value + 1)}>
+                      onPress={() => setReloads((previous) => ({ ...previous, [device.id]: (previous[device.id] ?? 0) + 1 }))}>
                       <ArrowClockwiseIcon size={18} aria-hidden="true" />
                     </Button></Smooth></Hint>
                     <Hint label="截图"><Smooth radius={12}><Button isIconOnly variant="ghost" aria-label="截图"
@@ -1364,7 +1449,7 @@ export function Component() {
                       <HammerIcon size={18} aria-hidden="true" />
                     </Button></Smooth></Hint>
                     <Hint label="清理构建缓存"><Smooth radius={12}><Button isIconOnly variant="ghost" aria-label="清理构建缓存"
-                      isDisabled={!project || project.demo || buildRequest} onPress={() => void requestBuild('clean')}>
+                      isDisabled={!project || buildRequest} onPress={() => void requestBuild('clean')}>
                       <BroomIcon size={18} aria-hidden="true" />
                     </Button></Smooth></Hint>
                   </div>
@@ -1409,7 +1494,7 @@ export function Component() {
                     })}
                   </div>
                   <footer className="debug-preview-footer">
-                    <PreviewInfo project={project} scene={scene?.title} height={snapshot.height} zoom={viewport.percent}
+                    <PreviewInfo project={project} scene={scene?.title} device={device} height={snapshot.height} zoom={viewport.percent}
                       status={status} agentSettings={agentSettings} />
                     <span className="debug-preview-notice" role="status">{notice}</span>
                   </footer>
@@ -1423,16 +1508,41 @@ export function Component() {
       <div className="debug-stage" ref={stage} data-ready={hasPreview && !!project}
         data-pan={dragging ? 'dragging' : space ? 'ready' : undefined}>
         {projectError && <p role="alert" className="debug-empty">无法读取项目配置。</p>}
-        {hasPreview && project && <div className="debug-device-canvas" data-ruler={ruler} style={{
-          width: width * scale, height: snapshot.height * scale,
-          transform: `translate(-50%, -50%) translate(${viewport.x}px, ${viewport.y}px)`,
-        }}>
-          <div className="debug-device-scale" style={{ width, height: snapshot.height, transform: `scale(${scale})` }}>
-          <Smooth radius={40} stroke={{ width: 1, color: "#ffffff", opacity: 0.5 }}><div className="debug-device-frame">
-            <iframe key={previewUrl} ref={preview} width={width} height={480} title={(scene?.title ?? project.title) + '预览'} src={previewUrl}
-              onLoad={() => setFrameReady((value) => value + 1)} />
-            {highlighted && !highlighted.hidden && <BoxHighlight node={highlighted} width={width} height={snapshot.height} />}
-            {picking && <div className="debug-pick-surface" onPointerMove={(event) => hover(findAt(event)?.id)}
+        {hasPreview && project && devices.map((profile) => {
+          const url = urlFor(profile.id);
+          const active = profile.id === device.id;
+          const cached = deviceSnapshots[profile.id];
+          const height = cached?.url === url ? cached.snapshot.height : previewHeight(profile, url);
+          const offset = deviceOffset(profile.id);
+          const selectedArea = layoutMode && layoutArea && layoutAreaForDevice(
+            layoutArea, offset / scale - profile.width / 2, -height / 2, profile.width, height,
+          );
+          const shaped = profile.shape !== 'rectangle';
+          const radius = shaped ? 0 : 40;
+          return <div key={profile.id} className="debug-device-canvas" data-ruler={active && ruler} style={{
+            width: profile.width * scale, height: height * scale,
+            transform: `translate(-50%, -50%) translate(${viewport.x + offset}px, ${viewport.y}px)`,
+          }}>
+          {comparison && <button type="button" className="debug-device-label" aria-pressed={active}
+            onClick={() => changeDevice(profile.id)}>{profile.name}</button>}
+          <div className="debug-device-scale" style={{ width: profile.width, height, transform: `scale(${scale})` }}>
+          <Smooth radius={radius} stroke={shaped ? undefined : { width: 1, color: "#ffffff", opacity: 0.5 }}>
+          <div className="debug-device-frame" style={{ borderRadius: radius, background: shaped ? 'transparent' : undefined }}>
+            <iframe key={url} width={profile.width} height={profile.height}
+              title={comparison ? profile.name + '预览' : (scene?.title ?? project.title) + '预览'} src={url}
+              ref={(frame) => {
+                if (frame) frames.current.set(profile.id, frame);
+                else frames.current.delete(profile.id);
+              }}
+              onLoad={(event) => {
+                event.currentTarget.contentWindow?.addEventListener('pointerdown', () => activateDevice.current(profile.id), true);
+                setFrameReady((value) => value + 1);
+              }} />
+            {selectedArea && <LayoutLens key={url} profile={profile} height={height} scale={scale} area={selectedArea}
+              frame={frames.current.get(profile.id)}
+              activeSnapshot={active ? snapshot : undefined} />}
+            {active && !layoutMode && highlighted && !highlighted.hidden && <BoxHighlight node={highlighted} width={width} height={snapshot.height} />}
+            {active && !layoutMode && picking && <div className="debug-pick-surface" onPointerMove={(event) => hover(findAt(event)?.id)}
               onPointerLeave={() => {
                 hover(undefined);
                 setMeasure(undefined);
@@ -1448,14 +1558,16 @@ export function Component() {
                 hover(undefined);
                 setPicking(false);
               }} />}
+            {profile.shape === 'capsule' && <div className="debug-device-capsule-outline"
+              style={{ height: profile.height }} aria-hidden="true" />}
           </div></Smooth>
           </div>
-          {ruler && <div className="debug-rulers">
+          {active && ruler && <div className="debug-rulers">
             <span className="debug-ruler-corner">px</span>
             <Ruler axis="y" size={snapshot.height} cursor={measure?.y} />
             <Ruler axis="x" size={width} cursor={measure?.x} />
           </div>}
-          {areaMode && <div className="debug-area-surface" onPointerDown={startArea} onPointerMove={moveArea}
+          {active && areaMode && <div className="debug-area-surface" onPointerDown={startArea} onPointerMove={moveArea}
             onPointerUp={endArea} onPointerCancel={() => { areaStart.current = undefined; setArea(undefined); }}>
             {area && <div className="debug-area-box" style={{
               left: area.x / width * 100 + '%', top: area.y / snapshot.height * 100 + '%',
@@ -1464,9 +1576,12 @@ export function Component() {
               <div className="debug-area-outline" aria-hidden="true" />
             </Smooth></div>}
           </div>}
-        </div>}
+        </div>;
+        })}
+        {layoutMode && <LayoutSelection area={layoutArea} onArea={setLayoutArea}
+          scale={scale} panX={viewport.x} panY={viewport.y} onPoint={ruler ? trackLayoutPoint : undefined} />}
         {inspected && <ElementCard node={inspected} detailed={picking} canvasWidth={width} canvasHeight={snapshot.height}
-          scale={scale} panX={viewport.x} panY={viewport.y} />}
+          scale={scale} panX={viewport.x + deviceOffset(device.id)} panY={viewport.y} />}
       </div>
       {areaMode && <div className="debug-area-hint">
         <Smooth radius="capsule" stroke={{ ...popoverStroke, opacity: 0.14 }}>
@@ -1480,6 +1595,12 @@ export function Component() {
           <div className="debug-capture-hint-body" role="status">{captureNotice}</div>
         </Smooth>
       </div>}
+      {layoutMode && <Smooth radius={14}><div className="debug-update debug-layout-hint" role="status"
+        data-build={status} data-compact={compactStatus} data-capture-notice={!!captureNotice}>
+        <RectangleDashedIcon size={18} aria-hidden="true" />
+        <span>拖动框选，检查尺寸和圆角</span>
+        <kbd className="debug-update-key">{apple ? 'Option' : 'Alt'}</kbd>
+      </div></Smooth>}
       {(status === 'building' || status === 'failed') && <Smooth radius={status === 'building' ? 'capsule' : 14}><div className="debug-update" data-status={status} data-compact={compactStatus}
         ref={statusRef} role={status === 'failed' ? 'alert' : 'status'} aria-label={status === 'building' ? '正在更新预览' : undefined}>
         <div className="debug-update-pane" data-pane="loading" aria-hidden={status !== 'building'}>
@@ -1523,12 +1644,14 @@ export function Component() {
       aria-hidden={!inspectorOpen} inert={!inspectorOpen}>
       <div className="debug-inspector-toolbar">
         <div className="debug-toolbar-slot">
-          <Smooth radius={6}><Button isIconOnly variant="ghost" className="debug-icon debug-picker" aria-label="从画布选取元素" aria-pressed={picking}
-            onPress={() => {
-              setPicking(!picking);
-              hover(undefined);
-              setView('元素');
-            }}><img className="debug-picker-asset" src={picker} alt="" /></Button></Smooth>
+          <Hint label={`按住 ${apple ? 'Option' : 'Alt'} 拖动框选布局`}>
+            <Smooth radius={6}><Button isIconOnly variant="ghost" className="debug-icon debug-picker" aria-label="从画布选取元素" aria-pressed={picking}
+              onPress={() => {
+                setPicking(!picking);
+                hover(undefined);
+                setView('元素');
+              }}><img className="debug-picker-asset" src={picker} alt="" /></Button></Smooth>
+          </Hint>
         </div>
         <DevToolsTabs label="调试面板" tabs={views} value={view} onChange={openView}
           extra={(name) => name === '控制台' && errorCount > 0 &&
@@ -1549,12 +1672,10 @@ export function Component() {
         </div>
       </div>
       {view === '元素' && <Inspector key={previewUrl} nodes={snapshot.nodes} selected={selected} canvasSelection={canvasSelection}
-        onCanvasSelectionRevealed={() => setCanvasSelection(undefined)} select={select} hover={hover} demo={project?.demo} />}
-      <Console logs={logs} clearLogs={() => setLogs([])} hidden={view !== '控制台'} />
-      {view === '源代码' && project?.demo && <Smooth radius={7}><div className="debug-panel">
-        <p className="debug-empty">从 Canopus 应用目录启动 DevBox 后，即可浏览该应用的源代码。</p>
-      </div></Smooth>}
-      {project && !project.demo && <Sources title={project.title} scene={scene?.id ?? ''} revision={sourceRevision + generation}
+        onCanvasSelectionRevealed={() => setCanvasSelection(undefined)} select={select} hover={hover} />}
+      <Console logs={logs} clearLogs={() => setLogs((previous) => previous.filter((entry) => entry.device && entry.device !== device.id))}
+        hidden={view !== '控制台'} />
+      {project && <Sources title={project.title} scene={scene?.id ?? ''} revision={sourceRevision + generation}
         hidden={view !== '源代码' || !inspectorOpen} />}
       {view === '资源' && <Smooth radius={7}><div className="debug-panel"><h2>当前画面</h2><dl className="debug-properties">
         <div><dt>图片对象</dt><dd>{snapshot.nodes.filter((node) => node.kind === 2 && !node.hidden).length}</dd></div>
@@ -1562,7 +1683,7 @@ export function Component() {
       {view === '性能' && <Smooth radius={7}><div className="debug-panel"><h2>浏览器预览</h2><dl className="debug-properties">
         <div><dt>对象数</dt><dd>{snapshot.nodes.length}</dd></div>
         <div><dt>最近绘制间隔</dt><dd>{snapshot.frameTime ? snapshot.frameTime.toFixed(1) + ' ms' : '—'}</dd></div>
-        {!project?.demo && <div><dt>WASM 内存</dt><dd>{snapshot.memoryBytes ? (snapshot.memoryBytes / 1048576).toFixed(1) + ' MiB' : '—'}</dd></div>}
+        <div><dt>WASM 内存</dt><dd>{snapshot.memoryBytes ? (snapshot.memoryBytes / 1048576).toFixed(1) + ' MiB' : '—'}</dd></div>
       </dl></div></Smooth>}
       {view === '图层' && <Smooth radius={7}><div className="debug-panel">
         {snapshot.nodes.filter((node) => !node.hidden).reverse().map((node) =>

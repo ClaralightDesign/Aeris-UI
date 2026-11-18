@@ -15,7 +15,7 @@ import { useLayoutEffect, useRef, useState } from 'react';
 import { Smooth, popoverStroke } from './smooth';
 
 export type LogLevel = 'log' | 'info' | 'error' | 'warning' | 'debug';
-export type Log = { level: LogLevel; source: '构建' | '运行'; text: string };
+export type Log = { level: LogLevel; source: '构建' | '运行'; text: string; device?: string };
 
 const levels = {
   error: { name: '错误', label: 'ERROR', icon: XCircleIcon },
