@@ -1,0 +1,30 @@
+[package]
+name = "aeris-gallery-device"
+description = "Aeris UI Gallery for Canopus"
+version = "0.2.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+
+[lib]
+crate-type = ["staticlib"]
+
+[features]
+default = []
+device = ["dep:canopus-target-private"]
+devbox = ["aeris-ui/devbox", "aeris-ui/gallery"]
+target-xiaomi-band-10-pro-3-101-043 = [
+  "device",
+  "canopus-target-private/target-xiaomi-band-10-pro-3-101-043",
+  "aeris-ui/gallery",
+]
+
+[dependencies]
+aeris-ui = { path = "../../crates/aeris-ui" }
+
+[target.'cfg(not(target_os = "emscripten"))'.dependencies]
+canopus-abi = { git = "https://github.com/AstralSightStudios/Canopus.git", rev = "f196b200823f47780c73ae48c4c62da8fe5311df" }
+canopus-runtime = { git = "https://github.com/AstralSightStudios/Canopus.git", rev = "f196b200823f47780c73ae48c4c62da8fe5311df" }
+canopus-target-private = { git = "https://github.com/AstralSightStudios/Canopus.git", rev = "f196b200823f47780c73ae48c4c62da8fe5311df", optional = true, default-features = false }
+
+# Canopus 独立构建项目。
+[workspace]

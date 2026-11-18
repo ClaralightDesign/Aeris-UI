@@ -1,0 +1,21 @@
+schema = 1
+
+[module]
+id = "aeris_gallery"
+version = "0.2.0"
+version_code = 32
+kind = "target"
+language = "rust"
+lifecycle = "resident-after-activation"
+canopus_abi = "2"
+description = "Aeris UI Gallery"
+
+[build]
+sources = ["Cargo.toml"]
+allowed_constants = []
+
+[targets]
+include = ["xiaomi-band-10-pro-3.101.043"]
+
+[resources]
+files = ["fonts/OFL.txt"]
