@@ -24,6 +24,7 @@
     <canvas id="gallery" width="336" height="480" aria-label="Aeris UI 组件预览"></canvas>
   </div>
   <p id="error" role="alert" hidden>无法加载组件预览。</p>
+  <!-- AERIS_RELOAD_SCRIPT -->
   <script>
     if (window.parent !== window) {
       document.documentElement.classList.add("embedded");
@@ -50,7 +51,12 @@
     let lastPaint;
     let frameTime = 0;
     let memoryBytes = 0;
+    let reload;
+    let runtimeFailed = false;
     const debug = params.has("debug") && window.parent !== window;
+    const reloadable = debug && params.has("reloadable") && typeof createPreviewReload === "function";
+    const storage = "aeris:app:" + (document.querySelector('meta[name="aeris-storage"]')?.content || "")
+      + ":" + (configuration?.isolatedStorage ? device.id + ":" : "");
     function notify(type, data = {}) {
       if (debug) window.parent.postMessage({ type, ...data }, location.origin);
     }
@@ -86,8 +92,12 @@
     var Module = {
       noInitialRun: true,
       galleryDevice: device,
-      galleryStorage: "aeris:app:" + (document.querySelector('meta[name="aeris-storage"]')?.content || "")
-        + ":" + (configuration?.isolatedStorage ? device.id + ":" : ""),
+      galleryReloadEnabled: reloadable,
+      galleryStorageAccess: {
+        getItem: (key) => localStorage.getItem(storage + key),
+        setItem: (key, value) => localStorage.setItem(storage + key, value),
+        removeItem: (key) => localStorage.removeItem(storage + key),
+      },
       galleryCrop(height) {
         if (!Number.isInteger(height) || height < 1 || height > canvas.height) return;
         cropHeight = height;
@@ -121,14 +131,49 @@
       print(text) { console.log(text); Module.galleryLog("log", text); },
       printErr(text) { console.error(text); Module.galleryLog("error", text); },
       galleryError() {
+        runtimeFailed = true;
         notify("aeris-debug-error");
         viewport.hidden = true;
         document.getElementById("error").hidden = false;
       },
       onRuntimeInitialized() {
+        const input = {
+          pointer: (...args) => Module._gallery_pointer(...args),
+          wheel: (...args) => Module._gallery_wheel(...args),
+          back: () => Module._devbox_back(),
+        };
+        const boot = () => {
+          void chineseFontsReady.then(() => {
+            try { Module.callMain(); }
+            catch (error) {
+              if (error !== "unwind" && !runtimeFailed) {
+                Module.galleryLog("error", error);
+                Module.galleryError();
+              }
+            }
+          });
+        };
+        const ready = () => !!canvas.dataset.ready && !runtimeFailed;
+        if (reloadable) {
+          reload = createPreviewReload({
+            stage: params.has("staged"), storage, contains, boot, ready, input,
+            inspect() {
+              Module.galleryNodes = [];
+              Module._gallery_reload_inspect();
+              return Module.galleryNodes;
+            },
+            hit: (...args) => Module._gallery_reload_hit(...args),
+            scrolling: () => Module._gallery_reload_scrolling(),
+            scrollTo: (...args) => Module._gallery_reload_scroll(...args),
+            failed: () => runtimeFailed,
+          });
+          window.aerisReload = reload.api;
+          Module.galleryStorageAccess = reload.storageAccess;
+        }
+        const controls = reload ?? input;
         let wheel = { time: -Infinity, x: 0, y: 0 };
         window.addEventListener("keydown", (event) => {
-          if (event.key === "Escape" && !event.defaultPrevented && canvas.dataset.ready) Module._devbox_back();
+          if (event.key === "Escape" && !event.defaultPrevented && ready()) controls.back();
         });
         if (debug) {
           window.aerisDebugger = {
@@ -174,7 +219,7 @@
           wheel.x -= dx;
           wheel.y -= dy;
           const position = point(event);
-          if ((dx || dy) && contains(...position)) Module._gallery_wheel(...position, dx, dy);
+          if ((dx || dy) && contains(...position)) controls.wheel(...position, dx, dy);
         }, { passive: false });
         canvas.addEventListener("pointerdown", (event) => {
           if (pointer !== null || event.button !== 0 || !canvas.dataset.ready) return;
@@ -182,20 +227,21 @@
           if (!contains(...position)) return;
           pointer = event.pointerId;
           canvas.setPointerCapture(pointer);
-          Module._gallery_pointer(...position, 0);
+          controls.pointer(...position, 0);
         });
         canvas.addEventListener("pointermove", (event) => {
-          if (pointer === event.pointerId) Module._gallery_pointer(...point(event), 1);
+          if (pointer === event.pointerId) controls.pointer(...point(event), 1);
         });
         for (const [name, phase] of [["pointerup", 2], ["pointercancel", 3], ["lostpointercapture", 3]]) {
           canvas.addEventListener(name, (event) => {
             if (pointer !== event.pointerId) return;
             pointer = null;
             const position = point(event);
-            Module._gallery_pointer(...position, contains(...position) ? phase : 3);
+            controls.pointer(...position, contains(...position) ? phase : 3);
           });
         }
-        void chineseFontsReady.then(() => Module.callMain());
+        if (reload) reload.start();
+        else boot();
       },
       onAbort(reason) { Module.galleryLog("error", reason); Module.galleryError(); },
     };

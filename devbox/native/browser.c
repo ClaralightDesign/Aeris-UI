@@ -546,7 +546,7 @@ void lvx_object_scroll_to_y(lv_obj_t *obj, int y, uint32_t animated) {
 
 EM_JS(int, storage_read, (const char *key, uint8_t *buffer, size_t capacity), {
     try {
-        const value = localStorage.getItem(Module.galleryStorage + UTF8ToString(key));
+        const value = Module.galleryStorageAccess.getItem(UTF8ToString(key));
         if (value === null) return -2;
         const bytes = atob(value);
         if (!buffer) return bytes.length;
@@ -560,14 +560,14 @@ EM_JS(int, storage_write, (const char *key, const uint8_t *buffer, size_t length
     try {
         let bytes = "";
         for (let i = 0; i < length; i++) bytes += String.fromCharCode(HEAPU8[buffer + i]);
-        localStorage.setItem(Module.galleryStorage + UTF8ToString(key), btoa(bytes));
+        Module.galleryStorageAccess.setItem(UTF8ToString(key), btoa(bytes));
         return 0;
     } catch { return -5; }
 });
 
 EM_JS(int, storage_remove, (const char *key), {
     try {
-        localStorage.removeItem(Module.galleryStorage + UTF8ToString(key));
+        Module.galleryStorageAccess.removeItem(UTF8ToString(key));
         return 0;
     } catch { return -5; }
 });
@@ -699,52 +699,82 @@ static int32_t wheel_room(lv_obj_t *obj, lv_dir_t direction) {
     }
 }
 
-EMSCRIPTEN_KEEPALIVE void gallery_wheel(int x, int y, int dx, int dy) {
-    if (!pointer || pressed || (!dx && !dy)) return;
+static lv_obj_t *pointer_target(int x, int y) {
+    if (!pointer) return NULL;
     lv_display_t *display = lv_indev_get_display(pointer);
     lv_obj_t *layers[] = {
         lv_display_get_layer_sys(display), lv_display_get_layer_top(display),
         lv_display_get_screen_active(display), lv_display_get_layer_bottom(display),
     };
-    const bool horizontal = LV_ABS(dx) > LV_ABS(dy);
-    const int delta = horizontal ? dx : dy;
-    const lv_dir_t dir = horizontal ? (delta < 0 ? LV_DIR_LEFT : LV_DIR_RIGHT)
-                                    : (delta < 0 ? LV_DIR_TOP : LV_DIR_BOTTOM);
-    const lv_obj_flag_t chain = horizontal ? LV_OBJ_FLAG_SCROLL_CHAIN_HOR : LV_OBJ_FLAG_SCROLL_CHAIN_VER;
     lv_point_t at = { x, y };
-    lv_obj_t *hit = NULL;
-    for (size_t i = 0; i < sizeof(layers) / sizeof(layers[0]) && !hit; i++) {
+    for (size_t i = 0; i < sizeof(layers) / sizeof(layers[0]); i++) {
         lv_obj_update_layout(layers[i]);
-        hit = lv_indev_search_obj(layers[i], &at);
+        lv_obj_t *hit = lv_indev_search_obj(layers[i], &at);
+        if (hit) return hit;
     }
+    return NULL;
+}
 
+static lv_obj_t *find_wheel_target(lv_obj_t *hit, lv_dir_t dir) {
+    const lv_obj_flag_t chain = (dir & LV_DIR_HOR) ? LV_OBJ_FLAG_SCROLL_CHAIN_HOR : LV_OBJ_FLAG_SCROLL_CHAIN_VER;
     for (lv_obj_t *obj = hit; obj; obj = lv_obj_get_parent(obj)) {
-        int32_t room = 0;
         if (lv_obj_has_flag(obj, LV_OBJ_FLAG_SCROLLABLE) && (lv_obj_get_scroll_dir(obj) & dir)) {
-            room = wheel_room(obj, dir);
-        }
-        if (room > 0) {
-            if (obj != wheel_target) {
-                if (wheel_target) {
-                    // Scroll-end callbacks can change the layout or delete objects.
-                    finish_wheel(wheel_timer);
-                    gallery_wheel(x, y, dx, dy);
-                    return;
-                }
-                wheel_target = obj;
-                lv_obj_add_event_cb(obj, wheel_target_deleted, LV_EVENT_DELETE, NULL);
-                lv_obj_stop_scroll_anim(obj);
-                if (!wheel_target || lv_obj_send_event(obj, LV_EVENT_SCROLL_BEGIN, NULL) != LV_RESULT_OK) return;
-            }
-            if (!wheel_timer) wheel_timer = lv_timer_create(finish_wheel, 200, NULL);
-            lv_timer_reset(wheel_timer);
-            lv_timer_resume(wheel_timer);
-            const int32_t offset = delta < 0 ? LV_MIN(room, -delta) : -LV_MIN(room, delta);
-            lv_obj_scroll_by_raw(obj, horizontal ? offset : 0, horizontal ? 0 : offset);
-            return;
+            if (wheel_room(obj, dir) > 0) return obj;
         }
         if (!lv_obj_has_flag(obj, chain)) break;
     }
+    return NULL;
+}
+
+static lv_dir_t wheel_direction(int dx, int dy) {
+    return LV_ABS(dx) > LV_ABS(dy) ? (dx < 0 ? LV_DIR_LEFT : LV_DIR_RIGHT)
+                                  : (dy < 0 ? LV_DIR_TOP : LV_DIR_BOTTOM);
+}
+
+EMSCRIPTEN_KEEPALIVE uintptr_t gallery_reload_hit(int x, int y, int dx, int dy) {
+    lv_obj_t *hit = pointer_target(x, y);
+    return (uintptr_t)((dx || dy) ? find_wheel_target(hit, wheel_direction(dx, dy)) : hit);
+}
+
+EMSCRIPTEN_KEEPALIVE bool gallery_reload_scrolling(void) {
+    return wheel_target || (pointer && lv_indev_get_scroll_obj(pointer));
+}
+
+EMSCRIPTEN_KEEPALIVE void gallery_reload_scroll(lv_obj_t *obj, int x, int y) {
+    if (lv_obj_is_valid(obj) && lv_obj_has_flag(obj, LV_OBJ_FLAG_SCROLLABLE)) {
+        lv_obj_stop_scroll_anim(obj);
+        // Scroll callbacks may delete the object. The verifier re-reads the tree
+        // after each change before operating on another axis or object.
+        if (lv_obj_get_scroll_x(obj) != x) lv_obj_scroll_to_x(obj, x, LV_ANIM_OFF);
+        else lv_obj_scroll_to_y(obj, y, LV_ANIM_OFF);
+    }
+}
+
+EMSCRIPTEN_KEEPALIVE void gallery_wheel(int x, int y, int dx, int dy) {
+    if (!pointer || pressed || (!dx && !dy)) return;
+    const lv_dir_t dir = wheel_direction(dx, dy);
+    const bool horizontal = (dir & LV_DIR_HOR) != 0;
+    const int delta = horizontal ? dx : dy;
+    lv_obj_t *obj = find_wheel_target(pointer_target(x, y), dir);
+    if (!obj) return;
+    if (obj != wheel_target) {
+        if (wheel_target) {
+            // Scroll-end callbacks can change the layout or delete objects.
+            finish_wheel(wheel_timer);
+            gallery_wheel(x, y, dx, dy);
+            return;
+        }
+        wheel_target = obj;
+        lv_obj_add_event_cb(obj, wheel_target_deleted, LV_EVENT_DELETE, NULL);
+        lv_obj_stop_scroll_anim(obj);
+        if (!wheel_target || lv_obj_send_event(obj, LV_EVENT_SCROLL_BEGIN, NULL) != LV_RESULT_OK) return;
+    }
+    if (!wheel_timer) wheel_timer = lv_timer_create(finish_wheel, 200, NULL);
+    lv_timer_reset(wheel_timer);
+    lv_timer_resume(wheel_timer);
+    const int32_t room = wheel_room(obj, dir);
+    const int32_t offset = delta < 0 ? LV_MIN(room, -delta) : -LV_MIN(room, delta);
+    lv_obj_scroll_by_raw(obj, horizontal ? offset : 0, horizontal ? 0 : offset);
 }
 
 EM_JS(void, browser_panic, (const char *file, size_t length, unsigned line), {
@@ -809,7 +839,47 @@ static bool is_nine_patch_slice(lv_obj_t *obj) {
     return name && strcmp(name, "AerisUI.NinePatchSlice") == 0;
 }
 
-static void inspect_tree(lv_obj_t *obj, lv_obj_t *parent, bool hidden) {
+EM_JS(bool, reload_metadata, (uintptr_t id, const char *label, size_t length, int value, bool set_value), {
+    if (!Module.galleryReloadEnabled) return false;
+    if (!Module.galleryReloadMetadata) Module.galleryReloadMetadata = new Map();
+    let metadata = Module.galleryReloadMetadata.get(id);
+    const first = !metadata;
+    if (first) Module.galleryReloadMetadata.set(id, metadata = {});
+    if (set_value) metadata.state = value;
+    else metadata.label = new TextDecoder().decode(HEAPU8.subarray(label, label + length));
+    return first;
+});
+
+EM_JS(void, clear_reload_metadata, (uintptr_t id), {
+    Module.galleryReloadMetadata.delete(id);
+});
+
+static void reload_metadata_deleted(lv_event_t *event) {
+    clear_reload_metadata((uintptr_t)lv_event_get_target(event));
+}
+
+void gallery_reload_label(lv_obj_t *obj, const char *label, size_t length) {
+    if (reload_metadata((uintptr_t)obj, label, length, 0, false)) {
+        lv_obj_add_event_cb(obj, reload_metadata_deleted, LV_EVENT_DELETE, NULL);
+    }
+}
+
+void gallery_reload_value(lv_obj_t *obj, int value) {
+    if (reload_metadata((uintptr_t)obj, NULL, 0, value, true)) {
+        lv_obj_add_event_cb(obj, reload_metadata_deleted, LV_EVENT_DELETE, NULL);
+    }
+}
+
+EM_JS(void, inspect_reload_state, (uintptr_t id, int x, int y, bool scroll, bool snap, bool moving), {
+    const node = Module.galleryNodes[Module.galleryNodes.length - 1];
+    const metadata = Module.galleryReloadMetadata?.get(id);
+    if (metadata) Object.assign(node, metadata);
+    if (scroll) node.scroll = [x, y];
+    if (snap) node.snap = true;
+    if (moving) node.moving = true;
+});
+
+static void inspect_tree(lv_obj_t *obj, lv_obj_t *parent, bool hidden, const char *root_class, bool reload) {
     lv_area_t area, content;
     lv_obj_get_coords(obj, &area);
     lv_obj_get_content_coords(obj, &content);
@@ -818,7 +888,7 @@ static void inspect_tree(lv_obj_t *obj, lv_obj_t *parent, bool hidden) {
         lv_obj_has_class(obj, &lv_image_class) ? 2 : 3;
     const char *value = kind == 1 ? lv_label_get_text(obj) : NULL;
     const lv_font_t *font = lv_obj_get_style_text_font(obj, LV_PART_MAIN);
-    const char *class_name = parent ? lv_obj_get_class(obj)->name : "lv_screen";
+    const char *class_name = parent ? lv_obj_get_class(obj)->name : root_class;
     const uint32_t count = lv_obj_get_child_count(obj);
     for (uint32_t index = 0; index < count; index++) {
         if (is_nine_patch_slice(lv_obj_get_child(obj, index))) {
@@ -849,9 +919,25 @@ static void inspect_tree(lv_obj_t *obj, lv_obj_t *parent, bool hidden) {
                  border_sides & LV_BORDER_SIDE_BOTTOM ? border : 0, border_sides & LV_BORDER_SIDE_LEFT ? border : 0,
                  font ? font->line_height : 0, text_scale, lv_obj_get_style_text_align(obj, LV_PART_MAIN),
                  lv_obj_has_state(obj, LV_STATE_CHECKED), lv_obj_has_state(obj, LV_STATE_DISABLED));
+    if (reload) {
+        bool scrollable = kind != 1 && lv_obj_has_flag(obj, LV_OBJ_FLAG_SCROLLABLE);
+        int x = scrollable ? lv_obj_get_scroll_x(obj) : 0;
+        int y = scrollable ? lv_obj_get_scroll_y(obj) : 0;
+        lv_dir_t dir = scrollable ? lv_obj_get_scroll_dir(obj) : LV_DIR_NONE;
+        bool scroll = x || y
+            || ((dir & LV_DIR_LEFT) && lv_obj_get_scroll_left(obj) > 0)
+            || ((dir & LV_DIR_RIGHT) && lv_obj_get_scroll_right(obj) > 0)
+            || ((dir & LV_DIR_TOP) && lv_obj_get_scroll_top(obj) > 0)
+            || ((dir & LV_DIR_BOTTOM) && lv_obj_get_scroll_bottom(obj) > 0);
+        bool snap = scroll && (lv_obj_get_scroll_snap_x(obj) != LV_SCROLL_SNAP_NONE
+            || lv_obj_get_scroll_snap_y(obj) != LV_SCROLL_SNAP_NONE);
+        lv_point_t end = {x, y};
+        if (scroll && !hidden) lv_obj_get_scroll_end(obj, &end);
+        inspect_reload_state((uintptr_t)obj, x, y, scroll, snap, end.x != x || end.y != y);
+    }
     for (uint32_t index = 0; index < count; index++) {
         lv_obj_t *child = lv_obj_get_child(obj, index);
-        if (!is_nine_patch_slice(child)) inspect_tree(child, obj, hidden);
+        if (!is_nine_patch_slice(child)) inspect_tree(child, obj, hidden, NULL, reload);
     }
 }
 
@@ -859,7 +945,21 @@ EMSCRIPTEN_KEEPALIVE void gallery_inspect(void) {
     lv_obj_t *root = lv_screen_active();
     if (root) {
         lv_obj_update_layout(root);
-        inspect_tree(root, NULL, false);
+        inspect_tree(root, NULL, false, "lv_screen", false);
+    }
+}
+
+EMSCRIPTEN_KEEPALIVE void gallery_reload_inspect(void) {
+    lv_display_t *display = lv_display_get_default();
+    if (!display) return;
+    lv_obj_t *roots[] = {
+        lv_display_get_screen_active(display), lv_display_get_layer_bottom(display),
+        lv_display_get_layer_top(display), lv_display_get_layer_sys(display),
+    };
+    const char *classes[] = { "lv_screen", "lv_layer_bottom", "lv_layer_top", "lv_layer_sys" };
+    for (size_t i = 0; i < sizeof(roots) / sizeof(roots[0]); i++) {
+        lv_obj_update_layout(roots[i]);
+        inspect_tree(roots[i], NULL, false, classes[i], true);
     }
 }
 

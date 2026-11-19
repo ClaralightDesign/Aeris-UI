@@ -43,6 +43,8 @@ pub(super) fn apply_dimming(root: Obj, dimmed: bool) {
 
 #[derive(Clone, Copy)]
 pub struct Choice {
+    #[cfg(target_os = "emscripten")]
+    card: Obj,
     on: Obj,
     off: Obj,
     thumb: Obj,
@@ -51,6 +53,8 @@ pub struct Choice {
 }
 
 const EMPTY_CHOICE: Choice = Choice {
+    #[cfg(target_os = "emscripten")]
+    card: NULL,
     on: NULL,
     off: NULL,
     thumb: NULL,
@@ -283,6 +287,8 @@ impl Choice {
         options: CardOptions,
     ) -> Self {
         let mut entry = Self {
+            #[cfg(target_os = "emscripten")]
+            card,
             transition: Transition::new(checked),
             ..EMPTY_CHOICE
         };
@@ -312,6 +318,7 @@ impl Choice {
                 }
             }
         }
+        lv::reload_value(card, i32::from(checked));
         render_choice(&entry);
         entry
     }
@@ -340,6 +347,8 @@ impl Choice {
         options: CardOptions,
     ) -> Self {
         let mut entry = Self {
+            #[cfg(target_os = "emscripten")]
+            card,
             transition: Transition::new(selected),
             radio: true,
             ..EMPTY_CHOICE
@@ -368,17 +377,22 @@ impl Choice {
                 lv::style(entry.off, 12, 20);
             }
         }
+        lv::reload_value(card, i32::from(selected));
         render_choice(&entry);
         entry
     }
 
     pub fn set_selected(&mut self, selected: bool) {
         self.transition = Transition::new(selected);
+        #[cfg(target_os = "emscripten")]
+        lv::reload_value(self.card, i32::from(selected));
         render_choice(self);
     }
 
     pub fn animate_to(&mut self, selected: bool) {
         self.transition.retarget(selected, anim::now_ms());
+        #[cfg(target_os = "emscripten")]
+        lv::reload_value(self.card, i32::from(selected));
     }
 
     pub fn draw(&mut self, now: u32) -> bool {

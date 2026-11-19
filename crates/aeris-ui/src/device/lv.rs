@@ -187,6 +187,29 @@ pub(super) unsafe fn inspect_name(_object: Obj, _name: &'static core::ffi::CStr)
     }
 }
 
+#[inline]
+pub(super) fn reload_label(_object: Obj, _label: &[u8]) {
+    #[cfg(target_os = "emscripten")]
+    if !_object.is_null() {
+        unsafe extern "C" {
+            fn gallery_reload_label(object: Obj, label: *const u8, length: usize);
+        }
+        let label = _label.strip_suffix(&[0]).unwrap_or(_label);
+        unsafe { gallery_reload_label(_object, label.as_ptr(), label.len()) };
+    }
+}
+
+#[inline]
+pub(super) fn reload_value(_object: Obj, _value: i32) {
+    #[cfg(target_os = "emscripten")]
+    if !_object.is_null() {
+        unsafe extern "C" {
+            fn gallery_reload_value(object: Obj, value: i32);
+        }
+        unsafe { gallery_reload_value(_object, _value) };
+    }
+}
+
 pub unsafe fn background(parent: Obj, width: i32, height: i32, color: u32, radius: u32) -> Obj {
     let object = unsafe { lvx_object_create(parent) };
     if object.is_null() {

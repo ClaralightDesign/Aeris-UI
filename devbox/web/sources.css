@@ -37,13 +37,8 @@
 }
 .debug-source-project { padding: 6px; font-weight: 500; }
 .debug-source-toolbar { grid-column: 1 / -1; min-width: 0; }
-.debug-source-tabs {
-  display: flex;
-  min-width: 0;
-  gap: 2px;
-  overflow: auto hidden;
-  scrollbar-width: none;
-}
+.debug-source-tab-scroll { flex: 1; }
+.debug-source-tabs { display: flex; gap: 2px; }
 .debug-source-tab {
   display: flex;
   align-items: center;
@@ -75,7 +70,7 @@
   color: inherit;
 }
 .debug-sources .debug-source-close:hover { background: var(--debug-divider); }
-.debug-source-scroll { flex: 1; min-height: 0; overflow: auto; }
+.debug-source-scroll { flex: 1; }
 .debug-source-list { margin: 0; padding: 0; list-style: none; }
 .debug-source-row { text-align: left; }
 .debug-source-caret { flex: none; color: var(--debug-muted); }

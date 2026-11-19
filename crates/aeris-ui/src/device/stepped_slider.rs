@@ -113,6 +113,11 @@ impl SteppedSlider {
                 }
                 lvx_object_clear_flag(icon, lv::CLICKABLE | lv::SCROLLABLE);
                 lvx_object_add_flag(hit, lv::CLICKABLE);
+                lv::inspect_name(hit, if action == DECREASE {
+                    c"AerisUI.StepDecrease"
+                } else {
+                    c"AerisUI.StepIncrease"
+                });
                 icons[action] = icon;
                 lv::bind(hit, on_input, action);
             }
@@ -156,6 +161,7 @@ impl SteppedSlider {
             }
             lvx_object_clear_flag(center, lv::SCROLL_CHAIN | lv::GESTURE_BUBBLE);
             lvx_object_add_flag(center, lv::CLICKABLE | PRESS_LOCK);
+            lv::inspect_name(center, c"AerisUI.StepTrack");
             for code in [EVENT_PRESSED, EVENT_PRESSING] {
                 lvx_event_add(center, on_input, code, TRACK as Obj);
             }
@@ -265,6 +271,7 @@ impl SteppedSlider {
     }
 
     fn paint_buttons(&self) {
+        lv::reload_value(self.center, i32::from(self.level));
         lv::style(self.minus, lv::OPA, if self.level == 0 { 102 } else { 255 });
         lv::style(
             self.plus,

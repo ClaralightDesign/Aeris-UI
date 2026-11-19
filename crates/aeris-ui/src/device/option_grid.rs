@@ -123,6 +123,7 @@ unsafe fn build_button(
             OptionTitle::Number(value) => (decimal(value, &mut digits), true),
             OptionTitle::Text(text) => (text.to_bytes_with_nul(), false),
         };
+        lv::reload_label(button, title);
         if !numeric
             || font::fixed_apx(
                 button,

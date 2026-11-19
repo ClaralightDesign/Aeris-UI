@@ -7,6 +7,7 @@ import { SidebarSimpleIcon } from '@phosphor-icons/react/dist/csr/SidebarSimple'
 import { XIcon } from '@phosphor-icons/react/dist/csr/X';
 import { useEffect, useRef, useState } from 'react';
 import { Smooth } from './smooth';
+import { ScrollPane } from './scroll-pane';
 import './sources.css';
 
 type Entry = { name: string; directory: boolean };
@@ -96,16 +97,16 @@ function SourceCode({ source, tab }: { source: Source; tab: FileTab }) {
   useEffect(() => {
     if (view.current) view.current.scrollTo(tab.scrollLeft, tab.scrollTop);
   }, [tab]);
-  return <div className="debug-source-scroll" tabIndex={0} aria-label={source.name} ref={view}
-    onScroll={(event) => {
+  return <ScrollPane className="debug-source-scroll" orientation="both"
+    viewport={{ ref: view, role: 'region', 'aria-label': source.name, onScroll: (event) => {
       tab.scrollLeft = event.currentTarget.scrollLeft;
       tab.scrollTop = event.currentTarget.scrollTop;
-    }}>
+    } }}>
     <div className="debug-source-code">
       <pre className="debug-source-lines" aria-hidden="true">{Array.from({ length: lines }, (_, index) => index + 1).join('\n')}</pre>
       <pre><code>{markup === undefined ? source.text : <span dangerouslySetInnerHTML={{ __html: markup }} />}{'\n'}</code></pre>
     </div>
-  </div>;
+  </ScrollPane>;
 }
 
 export function Sources({ title, scene, revision, hidden }: { title: string; scene: string; revision: number; hidden: boolean }) {
@@ -158,7 +159,8 @@ export function Sources({ title, scene, revision, hidden }: { title: string; sce
       <Smooth radius={6}><Button isIconOnly variant="ghost" className="debug-icon" aria-label={treeVisible ? '隐藏文件树' : '显示文件树'}
         aria-pressed={treeVisible} onPress={() => setTreeVisible(!treeVisible)}><SidebarSimpleIcon size={16} aria-hidden="true" /></Button></Smooth>
       {tabs.length > 0 && <span className="debug-panel-divider" aria-hidden="true" />}
-      <div className="debug-source-tabs" role="group" aria-label="已打开的文件">
+      <ScrollPane className="debug-source-tab-scroll" contentClassName="debug-source-tabs" orientation="horizontal"
+        showBars={false} viewport={{ role: 'group', 'aria-label': '已打开的文件' }}>
         {tabs.map(({ path }) => {
           const name = path.split('/').at(-1);
           const selected = path === active;
@@ -171,12 +173,13 @@ export function Sources({ title, scene, revision, hidden }: { title: string; sce
             </Button></Smooth>
           </div></Smooth>;
         })}
-      </div>
+      </ScrollPane>
     </div></Smooth>
-    {treeVisible && !hidden && <Smooth radius={8}><nav className="debug-panel-surface debug-source-tree" aria-label="项目文件">
+    {treeVisible && !hidden && <ScrollPane className="debug-panel-surface" contentClassName="debug-source-tree"
+      viewport={{ role: 'navigation', 'aria-label': '项目文件' }}>
       <div className="debug-source-project" title={title}>{title}</div>
       <DirectoryRows listing={root} path="" depth={0} scene={scene} revision={revision} active={active} open={open} />
-    </nav></Smooth>}
+    </ScrollPane>}
     <Smooth radius={8}><div className="debug-panel-surface debug-source-view">
       {tab && shown?.source ? <SourceCode key={tab.path} source={shown.source} tab={tab} /> :
         <p className="debug-source-message" role={shown?.error ? 'alert' : 'status'}>

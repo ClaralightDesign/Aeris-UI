@@ -53,6 +53,10 @@ WASM 画布的中文使用小米 MiSans 字体。DevBox 在首帧前从小米 CD
 title = "我的手表应用"
 manifest = "Cargo.toml"
 features = ["devbox"]
+hot_reload = true
+auto_refresh = true
+agent_cli = false
+mcp = false
 source = "src/lib.rs"
 watch = ["assets"]
 ```
@@ -77,9 +81,11 @@ aeris_ui::devbox_app!(browser::start);
 
 轻翎计时器的接入复用了既有页面生命周期，并为页面栈、时钟和本地存储提供浏览器适配。设备振动、系统通知和 AstroBox 激活仍依赖实机。应用也可以用 `scenes` 和 `devbox_scenes!` 保留独立的组件测试入口。
 
-保存源码或素材后会在构建成功时重启应用，保留浏览器本地存储。构建失败时可以继续操作上一成功版本，并在控制台查看错误。
+工作台默认启用 `hot_reload = true`。构建成功后，DevBox 在后台启动新版并重放本次会话的操作，确认页面、滚动位置和支持的控件状态已恢复后再切换。恢复或构建失败时可以继续操作旧版。恢复失败后可选择「从首页启动新版」。应用本地存储会跨重载保留。
 
-预览工具栏的「设置」提供「重新构建」和「清理构建缓存」。两项操作都会排队构建，成功后立即刷新预览。清理操作会先移除当前项目的 DevBox Cargo 和 LVGL 编译缓存，期间服务继续运行，并保留上一次构建成功的画面。
+`hot_reload = false` 时，源码或素材改动仍会自动构建。工作台等到你点击「重载」才从首页加载新版。`auto_refresh = false` 只暂停保存后的自动切换，仍可手动热重载。工具栏「设置」可临时切换这两项。临时开关在同一次 DevBox 服务运行期间有效，刷新浏览器后仍有效，重启服务后恢复项目配置。
+
+「重新构建」和「清理构建缓存」都会排队构建。清理操作会先移除当前项目的 DevBox Cargo 和 LVGL 编译缓存，期间可以继续使用当前预览。浏览器整页刷新会重新启动预览应用，Agent 保持自己的重载行为。
 
 ## Agent 接入
 
@@ -90,7 +96,7 @@ cargo aeris-devbox agent install-browser
 cargo aeris-devbox
 ```
 
-在预览工具栏的「设置」中，可分别开启「Agent CLI」和「MCP」。普通工作台启动时两项均关闭，刷新页面保留当前开关，重启 DevBox 后恢复默认。两种接口共用一个独立的无头预览，应用本地存储在该预览内跨重载保留。关闭某个开关会立即撤销该接口的访问密钥，重新开启后请复制新的连接信息。
+用 `agent_cli` 和 `mcp` 设置两种接口的项目默认值，省略时均为关闭。预览工具栏的「设置」可以临时覆盖，两种接口共用一个独立的无头预览，应用本地存储在该预览内跨重载保留。关闭某个开关会立即撤销该接口的访问密钥，重新开启后请复制新的连接信息。
 
 ### MCP
 
@@ -153,3 +159,5 @@ node devbox/cli.mjs agent serve --demo
 ```
 
 安装 Chromium 后，可用 `node --test devbox/agent.test.mjs` 验证 DemoMode 的 CLI、工作台开关和 MCP 接入。
+
+`node --test devbox/reload.test.mjs devbox/reload-workbench.test.mjs` 验证操作重放、存储隔离和浏览器工作台热更新。浏览器测试在临时目录构建 Gallery。

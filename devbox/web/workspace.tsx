@@ -1,5 +1,5 @@
 import { Button, Popover } from '@heroui/react';
-import { NumberInput, ScrollArea } from '@claralight-design/react';
+import { NumberInput } from '@claralight-design/react';
 import { ArrowClockwiseIcon } from '@phosphor-icons/react/dist/csr/ArrowClockwise';
 import { BroomIcon } from '@phosphor-icons/react/dist/csr/Broom';
 import { CameraPlusIcon } from '@phosphor-icons/react/dist/csr/CameraPlus';
@@ -30,11 +30,12 @@ import { Sources } from './sources';
 import { Smooth, popoverStroke } from './smooth';
 import { MAX_ZOOM, MIN_ZOOM, useCanvasViewport } from './canvas-viewport';
 import { defaultDevice, nodeName, pickNode, type DeviceProfile, type PreviewWindow, type Snapshot } from './preview';
+import { usePreviewReload } from './preview-reload';
+import { ScrollPane } from './scroll-pane';
 import logo from './assets/VerisDevBox.svg';
 import picker from './assets/PaperPlaneTilt.svg';
 import recordFull from './assets/RecordFull.svg';
 import recordArea from './assets/RecordArea.svg';
-import tooltipArrow from './assets/TooltipArrow.svg';
 import { downloadBlob, encodeAnimatedWebp, encodeGif, encodeScreenshot, type RecordedFrame } from './export';
 import './workspace.css';
 
@@ -67,6 +68,9 @@ type Project = {
   devices?: DeviceProfile[];
   status: Status;
   hasPreview: boolean;
+  hotReload: boolean;
+  autoRefresh: boolean;
+  publishedBuildId: number | null;
   logs: Omit<Log, 'source'>[];
   demo?: boolean;
   app?: { id?: string; module?: string; version?: string; versionCode?: number; abi?: string; package?: string; targets?: string[] };
@@ -78,17 +82,13 @@ type Project = {
   };
 };
 type Source = { name: string; text: string };
-type AgentAccess = 'cli' | 'mcp';
-type AgentSettings = Record<AgentAccess, boolean> & { cliSession?: string; mcpConfig?: object };
+type SessionSetting = 'cli' | 'mcp' | 'hotReload' | 'autoRefresh';
+type SessionSettings = Record<SessionSetting, boolean> & { revision: number; cliSession?: string; mcpConfig?: object };
 
 function PreviewDetails({ title, children }: { title: string; children: ReactNode }) {
   return <details className="debug-preview-info">
     <summary><span>{title}</span><CaretDownIcon size={12} aria-hidden="true" /></summary>
-    <ScrollArea orientation="vertical" edge="mask" scrollbars="hidden" radius="none"
-      className="debug-preview-info-scroll" viewportClassName="debug-preview-info-viewport"
-      contentClassName="debug-preview-info-body">
-      {children}
-    </ScrollArea>
+    <div className="debug-preview-info-body">{children}</div>
   </details>;
 }
 
@@ -97,18 +97,18 @@ function PreviewInfoRows({ rows }: { rows: readonly (readonly [string, ReactNode
     <div key={`${label}-${index}`}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>;
 }
 
-function PreviewInfo({ project, scene, device, height, zoom, status, agentSettings }: {
+function PreviewInfo({ project, scene, device, height, zoom, status, sessionSettings }: {
   project?: Project;
   scene?: string;
   device: DeviceProfile;
   height: number;
   zoom: number;
   status: Status;
-  agentSettings?: AgentSettings;
+  sessionSettings?: SessionSettings;
 }) {
   const { app, tools, demo } = project ?? {};
-  const cliSession = agentSettings?.cli ? agentSettings.cliSession : undefined;
-  const mcpConfig = agentSettings?.mcp ? agentSettings.mcpConfig : undefined;
+  const cliSession = sessionSettings?.cliSession;
+  const mcpConfig = sessionSettings?.mcpConfig;
   const displayedMcpConfig = mcpConfig && JSON.stringify(mcpConfig, (key, value) =>
     key === 'Authorization' ? 'Bearer ••••••••' : value, 2);
   const dependencies = Object.entries({
@@ -166,7 +166,9 @@ function PreviewInfo({ project, scene, device, height, zoom, status, agentSettin
   </>;
 }
 
-const agentOptions = [
+const previewSwitches = [
+  { kind: 'hotReload', label: '热重载', icon: HammerIcon },
+  { kind: 'autoRefresh', label: '保存后自动刷新', icon: ArrowClockwiseIcon },
   { kind: 'cli', label: 'Agent CLI', icon: TerminalWindowIcon, copy: '复制会话路径' },
   { kind: 'mcp', label: 'MCP', icon: LinkIcon, copy: '复制 MCP 配置' },
 ] as const;
@@ -278,7 +280,7 @@ function Hint({ label, keys, children, hidden }: { label: string; keys?: ReactNo
   const shadowId = useId();
   const [open, setOpen] = useState(false);
   const [anchor, setAnchor] = useState({ top: 0, x: 0 });
-  const [placement, setPlacement] = useState({ center: 0, arrowOffset: 0 });
+  const [placement, setPlacement] = useState({ center: 0, arrowLeft: 0 });
   useEffect(() => {
     if (hidden) setOpen(false);
   }, [hidden]);
@@ -297,7 +299,8 @@ function Hint({ label, keys, children, hidden }: { label: string; keys?: ReactNo
       const half = width / 2;
       const center = Math.max(half + inset, Math.min(document.documentElement.clientWidth - half - inset, anchor.x));
       const limit = Math.max(0, half - 11 - inset);
-      setPlacement({ center, arrowOffset: Math.max(-limit, Math.min(limit, anchor.x - center)) });
+      const offset = Math.max(-limit, Math.min(limit, anchor.x - center));
+      setPlacement({ center, arrowLeft: half - 11 + offset });
     }
     place(element.getBoundingClientRect().width);
     const observer = new ResizeObserver(() => place(element.getBoundingClientRect().width));
@@ -316,15 +319,22 @@ function Hint({ label, keys, children, hidden }: { label: string; keys?: ReactNo
       window.removeEventListener('scroll', hide, true);
     };
   }, [open]);
+  const shapeId = shadowId + '-shape';
+  const shape = { clipPath: `url("#${shapeId}")` };
   return <span className="debug-tooltip-host" ref={host}
     onMouseEnter={show} onMouseLeave={hide} onFocusCapture={show} onBlurCapture={hide}>
     {children}
     {open && !hidden && createPortal(
       <span ref={tooltip} className="debug-tooltip" style={{ top: anchor.top, left: placement.center }} role="tooltip">
-        <svg className="debug-tooltip-filter" width="0" height="0" aria-hidden="true">
+        <svg className="debug-tooltip-filter" width="100%" height="100%" aria-hidden="true">
           <defs>
+            <clipPath id={shapeId}>
+              <rect y={7.75} width="100%" height={28.25} rx={8} />
+              <path transform={`translate(${placement.arrowLeft} 0)`}
+                d="M0 8c3 0 6-5 9-7.35a3.1 3.1 0 0 1 4 0C16 3 19 8 22 8v.25H0Z" />
+            </clipPath>
             <filter id={shadowId} colorInterpolationFilters="sRGB">
-              {/* The exported arrow and the body both have a 25% white fill. */}
+              {/* Both parts of the silhouette share the same 25% white fill. */}
               <feComponentTransfer in="SourceAlpha" result="silhouette">
                 <feFuncA type="linear" slope={4} />
               </feComponentTransfer>
@@ -346,9 +356,9 @@ function Hint({ label, keys, children, hidden }: { label: string; keys?: ReactNo
             </filter>
           </defs>
         </svg>
+        <span className="debug-tooltip-glass" aria-hidden="true" style={shape} />
         <span className="debug-tooltip-surface" aria-hidden="true" style={{ filter: `url("#${shadowId}")` }}>
-          <img src={tooltipArrow} width={22} height={8} alt="" style={{ transform: `translateX(${placement.arrowOffset}px)` }} />
-          <Smooth radius={8}><span className="debug-tooltip-fill" /></Smooth>
+          <span className="debug-tooltip-fill" style={shape} />
         </span>
         <Smooth radius={8}><span className="debug-tooltip-body" data-shortcut={!!keys}>
           <span className="debug-tooltip-label">{label}</span>
@@ -387,13 +397,11 @@ export function Component() {
   const device = devices.find(({ id }) => id === deviceId) ?? devices[0];
   const { width } = device;
   const sceneFor = (id: string) => project?.scenes.find((item) => item.id === (scenes[id] ?? initialScene)) ?? project?.scenes[0];
-  const scene = sceneFor(device.id);
   const [hasPreview, setHasPreview] = useState(false);
   const [sourceRevision, setSourceRevision] = useState(0);
   const [deviceSnapshots, setDeviceSnapshots] = useState<Record<string, { url: string; snapshot: Snapshot }>>({});
   const [deviceCrops, setDeviceCrops] = useState<Record<string, { url: string; height: number }>>({});
-  const [generation, setGeneration] = useState(0);
-  const [reloads, setReloads] = useState<Record<string, number>>({});
+  const [automaticBuild, setAutomaticBuild] = useState<number | null>(null);
   const [status, setStatus] = useState<Status>('ready');
   const [allLogs, setLogs] = useState<Log[]>([]);
   const logs = useMemo(() => allLogs.filter((entry) => !entry.device || entry.device === device.id), [allLogs, device.id]);
@@ -403,7 +411,6 @@ export function Component() {
   const [picking, setPicking] = useState(false);
   const [scenesOpen, setScenesOpen] = useState(false);
   const [ruler, setRuler] = useState(false);
-  const [autoRefresh, setAutoRefresh] = useState(() => localStorage.getItem('aeris-debug-auto-refresh') !== 'off');
   const [selectedId, select] = useState<number>();
   const [canvasSelection, setCanvasSelection] = useState<number>();
   const [hoverId, hover] = useState<number>();
@@ -430,8 +437,8 @@ export function Component() {
   const [captureSettings, setCaptureSettings] = useState(false);
   const [zoomOpen, setZoomOpen] = useState(false);
   const [controlsOpen, setControlsOpen] = useState(false);
-  const [agentSettings, setAgentSettings] = useState<AgentSettings>();
-  const [agentUpdating, setAgentUpdating] = useState(false);
+  const [sessionSettings, setSessionSettings] = useState<SessionSettings>();
+  const [settingsUpdating, setSettingsUpdating] = useState(false);
   const [buildRequest, setBuildRequest] = useState(false);
   const [areaMode, setAreaMode] = useState<'shot' | 'video'>();
   const [area, setArea] = useState<CaptureRect>();
@@ -452,40 +459,59 @@ export function Component() {
   const stage = useRef<HTMLDivElement>(null);
   const preview = useRef<HTMLIFrameElement>(null);
   const frames = useRef(new Map<string, HTMLIFrameElement>());
+  const reloader = usePreviewReload((id, frame) => {
+    const height = Number(frame.contentDocument?.getElementById('viewport')?.dataset.cropHeight);
+    const url = frame.getAttribute('src');
+    if (url && height > 0) setDeviceCrops((previous) => ({ ...previous, [id]: { url, height } }));
+    setFrameReady((value) => value + 1);
+  });
+  const slot = reloader.slots[device.id];
+  const scene = project?.scenes.find(({ id }) => id === slot?.active.scene) ?? sceneFor(device.id);
   const activateDevice = useRef<(id: string) => void>(() => {});
   activateDevice.current = changeDevice;
-  const refreshEnabled = useRef(autoRefresh);
+  const hotReload = sessionSettings?.hotReload ?? project?.hotReload ?? true;
+
+  function applySettings(settings: SessionSettings) {
+    setSessionSettings((previous) => !previous || previous.revision < settings.revision ? settings : previous);
+  }
 
   useEffect(() => {
-    if (!controlsOpen) return;
     const controller = new AbortController();
     const { signal } = controller;
-    fetch('/devbox-agent-settings', { signal, cache: 'no-store' })
-      .then((response) => {
-        if (!response.ok) throw new Error();
-        return response.json() as Promise<AgentSettings>;
-      })
-      .then((settings) => { if (!signal.aborted) setAgentSettings(settings); })
-      .catch(() => { if (!signal.aborted) setNotice('无法读取 Agent 设置'); });
-    return () => controller.abort();
+    function readSettings() {
+      fetch('/devbox-agent-settings', { signal, cache: 'no-store' })
+        .then((response) => {
+          if (!response.ok) throw new Error();
+          return response.json() as Promise<SessionSettings>;
+        })
+        .then((settings) => { if (!signal.aborted) applySettings(settings); })
+        .catch(() => { if (!signal.aborted) setNotice('无法读取临时设置'); });
+    }
+    readSettings();
+    const hot = import.meta.hot;
+    hot?.on('aeris:settings', readSettings);
+    return () => {
+      controller.abort();
+      hot?.off('aeris:settings', readSettings);
+    };
   }, [controlsOpen]);
 
-  async function toggleAgent(kind: AgentAccess) {
-    if (!agentSettings || agentUpdating) return;
-    setAgentUpdating(true);
+  async function toggleSetting(kind: SessionSetting) {
+    if (!sessionSettings || settingsUpdating) return;
+    setSettingsUpdating(true);
     setNotice('');
     try {
       const response = await fetch('/devbox-agent-settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ kind, enabled: !agentSettings[kind] }),
+        body: JSON.stringify({ kind, enabled: !sessionSettings[kind] }),
       });
       if (!response.ok) throw new Error();
-      setAgentSettings(await response.json());
+      applySettings(await response.json());
     } catch {
-      setNotice('无法更新 Agent 设置');
+      setNotice('无法更新临时设置');
     } finally {
-      setAgentUpdating(false);
+      setSettingsUpdating(false);
     }
   }
 
@@ -502,12 +528,11 @@ export function Component() {
     }
   }
 
-  function urlFor(id: string) {
-    const params = new URLSearchParams({ scene: sceneFor(id)?.id ?? '', device: id, debug: '1',
-      revision: generation + '-' + (reloads[id] ?? 0) });
-    return '/preview.html?' + params;
+  function previewOptions(id: string) {
+    return { device: id, scene: sceneFor(id)?.id ?? '', build: project?.publishedBuildId ?? null,
+      enabled: hotReload };
   }
-  const previewUrl = urlFor(device.id);
+  const previewUrl = slot?.active.url ?? '';
   const savedSnapshot = deviceSnapshots[device.id];
   const snapshot = savedSnapshot?.url === previewUrl ? savedSnapshot.snapshot
     : { ...EMPTY_SNAPSHOT, height: previewHeight(device, previewUrl) };
@@ -527,7 +552,6 @@ export function Component() {
   const comparison = devices.length > 1;
   const totalWidth = devices.reduce((sum, profile) => sum + profile.width, 0) + gap * (devices.length - 1);
   const maxHeight = Math.max(...devices.map((profile) => profile.height));
-  const deviceList = devices.map(({ id }) => id).join(',');
   function fitDevices() {
     if (comparison) fit(totalWidth + 36, maxHeight + 66);
     else fit(width, snapshot.height);
@@ -549,9 +573,6 @@ export function Component() {
     const y = point.y + snapshot.height / 2;
     setMeasure(x >= 0 && x <= width && y >= 0 && y <= snapshot.height ? { x, y } : undefined);
   }
-  useLayoutEffect(() => {
-    if (hasPreview && comparison) fitDevices();
-  }, [hasPreview, deviceList]);
   const zoomLabel = `${viewport.percent.toFixed(1)}%`;
   const previousZoom = useRef(viewport.percent);
   const [zoomExpanded, setZoomExpanded] = useState(false);
@@ -585,9 +606,14 @@ export function Component() {
   }, [project?.title]);
 
   useEffect(() => {
-    refreshEnabled.current = autoRefresh;
-    localStorage.setItem('aeris-debug-auto-refresh', autoRefresh ? 'on' : 'off');
-  }, [autoRefresh]);
+    if (!hasPreview || !project) return;
+    const options = devices.map(({ id }) => previewOptions(id));
+    reloader.sync(options);
+    if (automaticBuild !== null && project.publishedBuildId === automaticBuild) {
+      options.forEach((entry) => reloader.reload(entry));
+      setAutomaticBuild(null);
+    }
+  }, [hasPreview, project, automaticBuild, hotReload]);
 
   useEffect(() => {
     const media = matchMedia(narrowInspectorQuery);
@@ -638,34 +664,42 @@ export function Component() {
     window.addEventListener('message', onMessage);
     const hot = import.meta.hot;
     const startup = new AbortController();
+    let request = 0;
+    let buildEvent = 0;
     async function loadProject(initial = false, refresh = false) {
+      const id = ++request;
+      const event = buildEvent;
       try {
         const response = await fetch('/devbox-project.json', { signal: startup.signal, cache: 'no-store' });
         if (!response.ok) throw new Error();
         const data: Project = await response.json();
-        if (startup.signal.aborted) return;
+        if (startup.signal.aborted || id !== request) return;
+        reloader.setPublication(data.publishedBuildId);
         setProject(data);
         setProjectError(false);
-        if (initial) {
+        setHasPreview(data.hasPreview);
+        if (initial && event === buildEvent) {
           setStatus(data.status);
-          setHasPreview(data.hasPreview);
           setLogs(data.logs.map((entry) => ({ ...entry, level: logLevel(entry.level, entry.text), source: '构建' })));
-        } else if (refresh) {
-          setGeneration((value) => value + 1);
         }
+        if (!initial && data.hotReload && (refresh || data.autoRefresh)) setAutomaticBuild(data.publishedBuildId);
+        if (refresh && !data.hotReload) setNotice('构建完成，可手动重载预览');
       } catch {
-        if (!startup.signal.aborted) setProjectError(true);
+        if (!startup.signal.aborted && id === request) setProjectError(true);
       }
     }
-    function build({ status: next, refresh }: { status: Status; refresh?: boolean }) {
+    function build({ status: next, refresh, publishedBuildId }: {
+      status: Status; refresh?: boolean; publishedBuildId: number | null;
+    }) {
+      buildEvent++;
       setStatus(next);
       if (refresh) setNotice((current) => current.startsWith('等待')
-        ? next === 'ready' ? '构建完成，已刷新预览' : '构建失败，请查看控制台'
+        ? next === 'ready' ? '构建完成' : '构建失败，请查看控制台'
         : current);
       if (next === 'ready') {
+        reloader.setPublication(publishedBuildId);
         setSourceRevision((value) => value + 1);
-        setHasPreview(true);
-        void loadProject(false, refresh || refreshEnabled.current);
+        void loadProject(false, refresh);
       }
     }
     function buildLog({ level, text }: { level: Log['level']; text: string }) {
@@ -764,10 +798,12 @@ export function Component() {
   }
 
   function changeScene(id: string) {
+    if (id === slot?.active.scene) return;
     const url = new URL(location.href);
     url.searchParams.set('scene', id);
     history.replaceState(null, '', url);
     setScenes((previous) => ({ ...previous, [device.id]: id }));
+    reloader.open({ ...previewOptions(device.id), scene: id });
   }
 
   function changeDevice(id: string) {
@@ -1287,12 +1323,14 @@ export function Component() {
           <Smooth radius={6}><Button variant="ghost" className="debug-target" aria-label="选择场景">
             <span>{project?.title ?? "Aeris DevBox"}</span>{scene && <span className="debug-target-device"> · {scene.title}</span>}<CaretDownIcon size={12} aria-hidden="true" />
           </Button></Smooth>
-          <Popover.Content placement="bottom" className="debug-popover-wrap"><Smooth radius={20} stroke={popoverStroke}><Popover.Dialog aria-label="预览场景" className="debug-popover">
+          <Popover.Content placement="bottom" className="debug-popover-wrap"><Smooth radius={20} stroke={popoverStroke}><Popover.Dialog aria-label="预览场景" className="debug-popover debug-scroll-menu">
+          <ScrollPane contentClassName="debug-scene-list" viewport={{ className: 'debug-menu-viewport' }}>
             <span className="debug-section-title">预览场景</span>
             {project?.scenes.map((item) => <Button key={item.id} variant="ghost" className="debug-menu-item"
               aria-pressed={scene?.id === item.id} onPress={() => { changeScene(item.id); setScenesOpen(false); }}>
               {item.title}
             </Button>)}
+          </ScrollPane>
           </Popover.Dialog></Smooth></Popover.Content>
         </Popover>}
         <div className="debug-tools">
@@ -1434,70 +1472,69 @@ export function Component() {
             <Popover isOpen={controlsOpen} onOpenChange={setControlsOpen}>
               <Smooth radius={6}><Button isIconOnly variant="ghost" className="debug-icon" aria-label="设置"><FadersIcon size={18} aria-hidden="true" /></Button></Smooth>
               <Popover.Content placement="bottom end" className="debug-popover-wrap">
-                <Smooth radius={20} stroke={popoverStroke}><Popover.Dialog className="debug-popover debug-preview-menu" aria-label="设置">
-                  <div className="debug-preview-actions">
-                    <Hint label="重载"><Smooth radius={12}><Button isIconOnly variant="ghost" aria-label="重载"
-                      onPress={() => setReloads((previous) => ({ ...previous, [device.id]: (previous[device.id] ?? 0) + 1 }))}>
-                      <ArrowClockwiseIcon size={18} aria-hidden="true" />
-                    </Button></Smooth></Hint>
-                    <Hint label="截图"><Smooth radius={12}><Button isIconOnly variant="ghost" aria-label="截图"
-                      isDisabled={!snapshot.nodes.length} onPress={() => void saveScreenshot('png')}>
-                      <CameraPlusIcon size={18} aria-hidden="true" />
-                    </Button></Smooth></Hint>
-                    <Hint label="重新构建"><Smooth radius={12}><Button isIconOnly variant="ghost" aria-label="重新构建"
-                      isDisabled={!project || buildRequest} onPress={() => void requestBuild('rebuild')}>
-                      <HammerIcon size={18} aria-hidden="true" />
-                    </Button></Smooth></Hint>
-                    <Hint label="清理构建缓存"><Smooth radius={12}><Button isIconOnly variant="ghost" aria-label="清理构建缓存"
-                      isDisabled={!project || buildRequest} onPress={() => void requestBuild('clean')}>
-                      <BroomIcon size={18} aria-hidden="true" />
-                    </Button></Smooth></Hint>
-                  </div>
-                  <div className="debug-preview-section">
-                    <div className="debug-preview-context">
-                      <h2>{scene ? '当前场景' : '应用'}</h2>
-                      <span title={scene?.title ?? project?.title}>{scene?.title ?? project?.title ?? '等待项目加载'}</span>
+                <Smooth radius={20} stroke={popoverStroke}><Popover.Dialog className="debug-popover debug-scroll-menu debug-preview-menu" aria-label="设置">
+                  <ScrollPane contentClassName="debug-preview-menu-content" edge="mask"
+                    viewport={{ className: 'debug-menu-viewport', role: 'region', 'aria-label': '设置内容' }}>
+                    <div className="debug-preview-actions">
+                      <Hint label="重载"><Smooth radius={12}><Button isIconOnly variant="ghost" aria-label="重载"
+                        isDisabled={!slot} onPress={() => reloader.reload(previewOptions(device.id), true)}>
+                        <ArrowClockwiseIcon size={18} aria-hidden="true" />
+                      </Button></Smooth></Hint>
+                      <Hint label="截图"><Smooth radius={12}><Button isIconOnly variant="ghost" aria-label="截图"
+                        isDisabled={!snapshot.nodes.length} onPress={() => void saveScreenshot('png')}>
+                        <CameraPlusIcon size={18} aria-hidden="true" />
+                      </Button></Smooth></Hint>
+                      <Hint label="重新构建"><Smooth radius={12}><Button isIconOnly variant="ghost" aria-label="重新构建"
+                        isDisabled={!project || buildRequest} onPress={() => void requestBuild('rebuild')}>
+                        <HammerIcon size={18} aria-hidden="true" />
+                      </Button></Smooth></Hint>
+                      <Hint label="清理构建缓存"><Smooth radius={12}><Button isIconOnly variant="ghost" aria-label="清理构建缓存"
+                        isDisabled={!project || buildRequest} onPress={() => void requestBuild('clean')}>
+                        <BroomIcon size={18} aria-hidden="true" />
+                      </Button></Smooth></Hint>
                     </div>
-                    <Smooth radius={12}><button type="button" className="debug-preview-setting" role="switch"
-                      aria-checked={autoRefresh} aria-label="保存后自动刷新" onClick={() => setAutoRefresh((enabled) => !enabled)}>
-                      <Smooth radius="capsule"><span className="debug-preview-setting-icon"><ArrowClockwiseIcon size={16} aria-hidden="true" /></span></Smooth>
-                      <span className="debug-preview-setting-label">
-                        <span>保存后自动刷新</span>
-                        <span>{autoRefresh ? '已开启' : '已关闭'}</span>
-                      </span>
-                    </button></Smooth>
-                  </div>
-                  <div className="debug-preview-section">
-                    {agentOptions.map(({ kind, label, icon: Icon, copy }) => {
-                      const enabled = agentSettings?.[kind] ?? false;
-                      const connection = kind === 'cli' ? agentSettings?.cliSession : agentSettings?.mcpConfig;
-                      return <div className="debug-agent-setting" key={kind}>
-                        <Smooth radius={12}><button type="button" className="debug-preview-setting"
-                          role="switch" aria-label={label} aria-checked={enabled}
-                          disabled={!agentSettings || agentUpdating} onClick={() => void toggleAgent(kind)}>
-                          <Smooth radius="capsule"><span className="debug-preview-setting-icon"><Icon size={16} aria-hidden="true" /></span></Smooth>
-                          <span className="debug-preview-setting-label">
-                            <span>{label}</span>
-                            <span>{agentSettings ? enabled ? '已开启' : '已关闭' : '读取设置中'}</span>
-                          </span>
-                        </button></Smooth>
-                        {enabled && connection && <Button variant="ghost" className="debug-agent-copy" onPress={async () => {
-                          const value = typeof connection === 'string' ? connection : JSON.stringify(connection, null, 2);
-                          try {
-                            await navigator.clipboard.writeText(value);
-                            setNotice('已' + copy);
-                          } catch {
-                            setNotice('无法' + copy);
-                          }
-                        }}>{copy}</Button>}
-                      </div>;
-                    })}
-                  </div>
-                  <footer className="debug-preview-footer">
-                    <PreviewInfo project={project} scene={scene?.title} device={device} height={snapshot.height} zoom={viewport.percent}
-                      status={status} agentSettings={agentSettings} />
-                    <span className="debug-preview-notice" role="status">{notice}</span>
-                  </footer>
+                    <div className="debug-preview-section">
+                      <div className="debug-preview-context">
+                        <h2>{scene ? '当前场景' : '应用'}</h2>
+                        <span title={scene?.title ?? project?.title}>{scene?.title ?? project?.title ?? '等待项目加载'}</span>
+                      </div>
+                    </div>
+                    <div className="debug-preview-section">
+                      <div className="debug-preview-context"><h2>临时开关</h2><span>重启后恢复项目配置</span></div>
+                      {previewSwitches.map((option) => {
+                        const { kind, label, icon: Icon } = option;
+                        const enabled = sessionSettings?.[kind] ?? false;
+                        const connection = kind === 'cli' ? sessionSettings?.cliSession
+                          : kind === 'mcp' ? sessionSettings?.mcpConfig : undefined;
+                        const copy = 'copy' in option ? option.copy : undefined;
+                        return <div className="debug-agent-setting" key={kind}>
+                          <Smooth radius={12}><button type="button" className="debug-preview-setting"
+                            role="switch" aria-label={label} aria-checked={enabled}
+                            disabled={!sessionSettings || settingsUpdating} onClick={() => void toggleSetting(kind)}>
+                            <Smooth radius="capsule"><span className="debug-preview-setting-icon"><Icon size={16} aria-hidden="true" /></span></Smooth>
+                            <span className="debug-preview-setting-label">
+                              <span>{label}</span>
+                              <span>{sessionSettings ? enabled ? '已开启' : '已关闭' : '读取设置中'}</span>
+                            </span>
+                          </button></Smooth>
+                          {enabled && connection && copy && <Button variant="ghost" className="debug-agent-copy" onPress={async () => {
+                            const value = typeof connection === 'string' ? connection : JSON.stringify(connection, null, 2);
+                            try {
+                              await navigator.clipboard.writeText(value);
+                              setNotice('已' + copy);
+                            } catch {
+                              setNotice('无法' + copy);
+                            }
+                          }}>{copy}</Button>}
+                        </div>;
+                      })}
+                    </div>
+                    <footer className="debug-preview-footer">
+                      <PreviewInfo project={project} scene={scene?.title} device={device} height={snapshot.height} zoom={viewport.percent}
+                        status={status} sessionSettings={sessionSettings} />
+                      <span className="debug-preview-notice" role="status">{notice}</span>
+                    </footer>
+                  </ScrollPane>
                 </Popover.Dialog></Smooth>
               </Popover.Content>
             </Popover>
@@ -1509,7 +1546,9 @@ export function Component() {
         data-pan={dragging ? 'dragging' : space ? 'ready' : undefined}>
         {projectError && <p role="alert" className="debug-empty">无法读取项目配置。</p>}
         {hasPreview && project && devices.map((profile) => {
-          const url = urlFor(profile.id);
+          const entry = reloader.slots[profile.id];
+          if (!entry) return null;
+          const url = entry.active.url;
           const active = profile.id === device.id;
           const cached = deviceSnapshots[profile.id];
           const height = cached?.url === url ? cached.snapshot.height : previewHeight(profile, url);
@@ -1528,16 +1567,27 @@ export function Component() {
           <div className="debug-device-scale" style={{ width: profile.width, height, transform: `scale(${scale})` }}>
           <Smooth radius={radius} stroke={shaped ? undefined : { width: 1, color: "#ffffff", opacity: 0.5 }}>
           <div className="debug-device-frame" style={{ borderRadius: radius, background: shaped ? 'transparent' : undefined }}>
-            <iframe key={url} width={profile.width} height={profile.height}
-              title={comparison ? profile.name + '预览' : (scene?.title ?? project.title) + '预览'} src={url}
-              ref={(frame) => {
-                if (frame) frames.current.set(profile.id, frame);
-                else frames.current.delete(profile.id);
-              }}
-              onLoad={(event) => {
-                event.currentTarget.contentWindow?.addEventListener('pointerdown', () => activateDevice.current(profile.id), true);
-                setFrameReady((value) => value + 1);
-              }} />
+            {[entry.active, ...(entry.pending ? [entry.pending] : [])].map((item) => {
+              const staging = item !== entry.active;
+              return <iframe key={item.key} width={profile.width} height={profile.height}
+                data-staging={staging || undefined} inert={staging} aria-hidden={staging || undefined} tabIndex={staging ? -1 : undefined}
+                title={staging ? '正在恢复的预览' : comparison ? profile.name + '预览' : (scene?.title ?? project.title) + '预览'}
+                src={item.url} ref={(frame) => {
+                  if (frame) reloader.frames.current.set(item.key, frame);
+                  else reloader.frames.current.delete(item.key);
+                  if (staging) return;
+                  if (frame) frames.current.set(profile.id, frame);
+                  else frames.current.delete(profile.id);
+                }}
+                onLoad={(event) => {
+                  const frame = event.currentTarget;
+                  frame.dataset.loaded = 'true';
+                  frame.contentWindow?.addEventListener('pointerdown', () => {
+                    if (frames.current.get(profile.id) === frame) activateDevice.current(profile.id);
+                  }, true);
+                  if (frames.current.get(profile.id) === frame) setFrameReady((value) => value + 1);
+                }} />;
+            })}
             {selectedArea && <LayoutLens key={url} profile={profile} height={height} scale={scale} area={selectedArea}
               frame={frames.current.get(profile.id)}
               activeSnapshot={active ? snapshot : undefined} />}
@@ -1578,6 +1628,11 @@ export function Component() {
           </div>}
         </div>;
         })}
+        {slot?.error && <div className="debug-reload-notice" role="alert">
+          <span>新版尚未切换。{slot.error}</span>
+          <button type="button" onClick={() => reloader.open(previewOptions(device.id))}>从首页启动新版</button>
+        </div>}
+        {slot?.pending && <div className="debug-reload-notice" role="status">正在恢复当前页面…</div>}
         {layoutMode && <LayoutSelection area={layoutArea} onArea={setLayoutArea}
           scale={scale} panX={viewport.x} panY={viewport.y} onPoint={ruler ? trackLayoutPoint : undefined} />}
         {inspected && <ElementCard node={inspected} detailed={picking} canvasWidth={width} canvasHeight={snapshot.height}
@@ -1675,21 +1730,24 @@ export function Component() {
         onCanvasSelectionRevealed={() => setCanvasSelection(undefined)} select={select} hover={hover} />}
       <Console logs={logs} clearLogs={() => setLogs((previous) => previous.filter((entry) => entry.device && entry.device !== device.id))}
         hidden={view !== '控制台'} />
-      {project && <Sources title={project.title} scene={scene?.id ?? ''} revision={sourceRevision + generation}
+      {project && <Sources title={project.title} scene={scene?.id ?? ''} revision={sourceRevision}
         hidden={view !== '源代码' || !inspectorOpen} />}
-      {view === '资源' && <Smooth radius={7}><div className="debug-panel"><h2>当前画面</h2><dl className="debug-properties">
+      {view === '资源' && <ScrollPane className="debug-panel" contentClassName="debug-panel-content"
+        viewport={{ role: 'region', 'aria-label': '资源内容' }}><h2>当前画面</h2><dl className="debug-properties">
         <div><dt>图片对象</dt><dd>{snapshot.nodes.filter((node) => node.kind === 2 && !node.hidden).length}</dd></div>
-      </dl></div></Smooth>}
-      {view === '性能' && <Smooth radius={7}><div className="debug-panel"><h2>浏览器预览</h2><dl className="debug-properties">
+      </dl></ScrollPane>}
+      {view === '性能' && <ScrollPane className="debug-panel" contentClassName="debug-panel-content"
+        viewport={{ role: 'region', 'aria-label': '性能内容' }}><h2>浏览器预览</h2><dl className="debug-properties">
         <div><dt>对象数</dt><dd>{snapshot.nodes.length}</dd></div>
         <div><dt>最近绘制间隔</dt><dd>{snapshot.frameTime ? snapshot.frameTime.toFixed(1) + ' ms' : '—'}</dd></div>
         <div><dt>WASM 内存</dt><dd>{snapshot.memoryBytes ? (snapshot.memoryBytes / 1048576).toFixed(1) + ' MiB' : '—'}</dd></div>
-      </dl></div></Smooth>}
-      {view === '图层' && <Smooth radius={7}><div className="debug-panel">
+      </dl></ScrollPane>}
+      {view === '图层' && <ScrollPane className="debug-panel" contentClassName="debug-panel-content"
+        viewport={{ role: 'region', 'aria-label': '图层内容' }}>
         {snapshot.nodes.filter((node) => !node.hidden).reverse().map((node) =>
           <Button key={node.id} variant="ghost" className="debug-layer" onHoverStart={() => hover(node.id)} onHoverEnd={() => hover(undefined)}
             onPress={() => { select(node.id); setView('元素'); }}>{nodeName(node)} <span>{node.width} × {node.height}</span></Button>)}
-      </div></Smooth>}
+      </ScrollPane>}
     </aside></Smooth>
     {inspectorOpen && placement !== 'bottom' && <div className="debug-resizer" data-placement={placement} role="separator"
       aria-orientation="vertical" aria-label="调整检查器宽度" onPointerDown={resize} />}

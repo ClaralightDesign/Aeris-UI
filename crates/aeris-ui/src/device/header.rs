@@ -301,6 +301,7 @@ impl HeaderBar {
                     Font::Small24,
                     crate::TextSize::Body.pixels(super::display_profile().viewport),
                 );
+                lv::inspect_name(label, c"AerisUI.HeaderTitle");
                 lv::style(label, 94, text_align(layout.title_align));
                 lv::inspect_text_apx(
                     label,
@@ -491,6 +492,7 @@ impl HeaderBar {
                             Apx::from_halves(9),
                         );
                         if !label.is_null() {
+                            lv::inspect_name(label, c"AerisUI.HeaderTitle");
                             lvx_label_set_long_mode(label, 1);
                         }
                         label

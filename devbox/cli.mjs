@@ -134,6 +134,11 @@ function config() {
   }
   const source = readFileSync(configPath, 'utf8');
   const data = extname(configPath) === '.json' ? JSON.parse(source) : parse(source).devbox;
+  for (const key of ['agent_cli', 'mcp', 'hot_reload', 'auto_refresh']) {
+    if (data?.[key] !== undefined && typeof data[key] !== 'boolean') {
+      throw new Error(key + ' 需要设置为 true 或 false。');
+    }
+  }
   if (!data || typeof data.title !== 'string' || !data.title.trim()
       || typeof data.manifest !== 'string' || !data.manifest.trim()
       || (data.icon !== undefined && (typeof data.icon !== 'string' || !data.icon.trim()))
@@ -203,6 +208,15 @@ function projectContext(settings) {
   };
 }
 
+function settingsDefaults(settings) {
+  return {
+    cli: agentMode || (settings.agent_cli ?? false),
+    mcp: settings.mcp ?? false,
+    hotReload: settings.hot_reload ?? true,
+    autoRefresh: settings.auto_refresh ?? true,
+  };
+}
+
 function projectInfo(settings) {
   const canopus = settings.manifest && readToml(resolve(project, settings.manifest, '../Canopus.toml'));
   return {
@@ -254,7 +268,7 @@ function log(level, text) {
 
 function updateStatus(status, refresh = false) {
   buildStatus = status;
-  server?.ws.send('aeris:build', { status, refresh });
+  server?.ws.send('aeris:build', { status, refresh, publishedBuildId });
 }
 
 async function run(command, args, options, capture = false) {
@@ -289,6 +303,7 @@ function watch(paths) {
 
 async function build() {
   const settings = config();
+  agent.configure(settingsDefaults(settings));
   const manifest = resolve(project, settings.manifest);
   watch([manifest, resolve(manifest, '../src'), resolve(manifest, '../Canopus.toml'),
     ...(settings.watch ?? []).map((path) => resolve(project, path))]);
@@ -331,8 +346,12 @@ async function build() {
   const stagingDirectory = mkdtempSync(join(buildRoot, 'preview-'));
   const staging = join(stagingDirectory, 'preview.html');
   try {
+    const shell = join(stagingDirectory, 'shell.html');
+    const reload = readFileSync(join(root, 'native/reload.js'), 'utf8');
+    writeFileSync(shell, readFileSync(join(root, 'native/shell.html'), 'utf8')
+      .replace('<!-- AERIS_RELOAD_SCRIPT -->', () => '<script>\n' + reload + '\n</script>'));
     await run(emcc, ['-Os', '-flto', '-sSINGLE_FILE=1', '-sEXPORTED_RUNTIME_METHODS=UTF8ToString,callMain', '-sALLOW_MEMORY_GROWTH=1', '-sSTACK_SIZE=131072',
-      '--shell-file', join(root, 'native/shell.html'), 'browser.o',
+      '--shell-file', shell, 'browser.o',
       join(cargoEnvironment.CARGO_TARGET_DIR, target, 'release', 'lib' + library.name.replaceAll('-', '_') + '.a'),
       'liblvgl.a', '-o', staging],
     { cwd: nativeBuild, env });
@@ -433,7 +452,7 @@ async function serve(req, res, next) {
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
       const { title, scenes, devices } = publishedProject;
       res.end(JSON.stringify({ title, scenes, devices, app: publishedProject.app, tools: publishedProject.tools,
-        status: buildStatus, logs: history, hasPreview: existsSync(preview), demo }));
+        status: buildStatus, ...agent.previewSettings(), publishedBuildId, logs: history, hasPreview: existsSync(preview), demo }));
     } else if (url.pathname === '/devbox-source') {
       if (!/^(localhost|127\.0\.0\.1)(:\d+)?$/i.test(req.headers.host ?? '')) {
         res.statusCode = 403;
@@ -447,14 +466,24 @@ async function serve(req, res, next) {
         res.writeHead(409).end();
         return;
       }
+      const requestedBuild = url.searchParams.get('workbenchBuild');
+      if (requestedBuild !== null && requestedBuild !== String(publishedBuildId ?? '')) {
+        res.writeHead(409).end();
+        return;
+      }
       if (!existsSync(preview)) {
         res.statusCode = 503;
         res.end();
         return;
       }
       const device = url.searchParams.get('device');
-      const { devices, isolatedStorage } = publishedProject;
+      const { devices, isolatedStorage, scenes } = publishedProject;
       if (device !== null && !devices.some(({ id }) => id === device)) {
+        res.writeHead(404).end();
+        return;
+      }
+      const scene = url.searchParams.get('scene') ?? '';
+      if (requestedBuild !== null && (scenes.length ? !scenes.some(({ id }) => id === scene) : scene !== '')) {
         res.writeHead(404).end();
         return;
       }
@@ -495,9 +524,11 @@ async function shutdown() {
 }
 
 try {
-  publishedProject = projectInfo(config());
+  const initial = config();
+  publishedProject = projectInfo(initial);
   const { createAgent } = await import('./agent.mjs');
-  agent = createAgent({ buildState: agentBuildState, directory: agentDirectory });
+  agent = createAgent({ buildState: agentBuildState, directory: agentDirectory,
+    onSettingsChanged: () => server?.ws.send('aeris:settings', {}) });
   if (agentMode) httpServer = createHttpServer();
   const port = agentMode ? 0 : Number(process.env.AERIS_DEVBOX_PORT ?? 5173);
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('AERIS_DEVBOX_PORT 需要有效的端口号。');
@@ -524,9 +555,9 @@ try {
     await server.listen();
     server.printUrls();
   }
-  queue();
-  agent.start((httpServer ?? server.httpServer).address().port, agentMode);
+  agent.start((httpServer ?? server.httpServer).address().port, settingsDefaults(initial), agentMode);
   agentReady = true;
+  queue();
 } catch (error) {
   console.error(error.message);
   await shutdown();

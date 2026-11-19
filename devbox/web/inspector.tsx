@@ -8,6 +8,7 @@ import { Button, Input } from '@heroui/react';
 import { DevToolsTabs } from './devtools-tabs';
 import { useLayoutEffect, useRef, useState } from 'react';
 import { Smooth } from './smooth';
+import { ScrollPane } from './scroll-pane';
 import { nodeClass, nodeName, type PreviewNode } from './preview';
 import { styleProperties } from './node-properties';
 
@@ -85,7 +86,8 @@ export function Inspector({ nodes, selected, canvasSelection, onCanvasSelectionR
   return <>
     <section className="debug-tree">
       <Smooth radius={7}><div className="debug-search"><MagnifyingGlassIcon size={16} aria-hidden="true" /><Input aria-label="搜索对象" placeholder="搜索" value={query} onChange={(event) => setQuery(event.target.value)} /></div></Smooth>
-      <Smooth radius={7}><div className="debug-tree-scroll" onMouseLeave={() => hover()} aria-label="LVGL 对象树">
+      <ScrollPane className="debug-tree-scroll" orientation="both" contentClassName="debug-tree-content"
+        viewport={{ onMouseLeave: () => hover(), role: 'region', 'aria-label': 'LVGL 对象树' }}>
         {nodes.map((node) => {
           if (filtering && !matching.has(node.id)) return null;
           let depth = 0;
@@ -113,7 +115,7 @@ export function Inspector({ nodes, selected, canvasSelection, onCanvasSelectionR
         })}
         {!nodes.length && <p className="debug-empty">等待预览加载</p>}
         {filtering && nodes.length > 0 && !matching.size && <p className="debug-empty">未找到对象</p>}
-      </div></Smooth>
+      </ScrollPane>
     </section>
     <section className="debug-details">
       <DevToolsTabs label="对象详情" tabs={tabs} value={tab} onChange={setTab} />
@@ -123,7 +125,9 @@ export function Inspector({ nodes, selected, canvasSelection, onCanvasSelectionR
           <Smooth radius={6}><Button isIconOnly variant="ghost" className="debug-icon" aria-label="查看布局" onPress={() => setTab('布局')}><BugBeetleIcon size={16} aria-hidden="true" /></Button></Smooth>
           <Smooth radius={6}><Button isIconOnly variant="ghost" className="debug-icon" aria-label="查看属性" onPress={() => setTab('属性')}><BracketsAngleIcon className="debug-detail-attributes-icon" size={16} aria-hidden="true" /></Button></Smooth>
         </div></Smooth>
-        <Smooth radius={7}><div className="debug-detail-body"><NodeDetails node={selected} tab={tab} /></div></Smooth>
+        <ScrollPane className="debug-detail-body" viewport={{ role: 'region', 'aria-label': '对象详情内容' }}>
+          <NodeDetails node={selected} tab={tab} />
+        </ScrollPane>
         <Smooth radius={7}><div className="debug-detail-footer"><span>渲染引擎</span><span><AtIcon size={15} aria-hidden="true" /> LVGL 9.4</span></div></Smooth>
       </>}
     </section>

@@ -9,9 +9,12 @@ const success = (result) => ({ version: protocol, ok: true, ...result });
 const error = (code, message, details) => Object.assign(new Error(message), { code, details });
 const nonnegativeInteger = (value) => Number.isSafeInteger(value) && value >= 0;
 
-export function createAgent({ buildState, directory }) {
+export function createAgent({ buildState, directory, onSettingsChanged }) {
   const session = join(directory, 'session.json');
   const access = { cli: undefined, mcp: undefined };
+  const preview = { hotReload: true, autoRefresh: true };
+  const overrides = Object.create(null);
+  let settingsRevision = 0;
   const entries = [];
   let cursor = 0;
   let url;
@@ -32,12 +35,10 @@ export function createAgent({ buildState, directory }) {
     return previews.get(id);
   }
 
-  function start(port, cliEnabled) {
+  function start(port, defaults, announceSession) {
     url = 'http://127.0.0.1:' + port;
-    if (cliEnabled) {
-      setAccess('cli', true);
-      console.log(JSON.stringify(success({ session, url })));
-    }
+    configure(defaults);
+    if (announceSession) console.log(JSON.stringify(success({ session, url })));
   }
 
   function setAccess(kind, enabled) {
@@ -56,8 +57,38 @@ export function createAgent({ buildState, directory }) {
     access[kind] = { token, controller: new AbortController() };
   }
 
+  function setSetting(kind, enabled) {
+    if (Object.hasOwn(preview, kind)) {
+      if (preview[kind] === enabled) return false;
+      preview[kind] = enabled;
+    } else {
+      if (Boolean(access[kind]) === enabled) return false;
+      setAccess(kind, enabled);
+    }
+    return true;
+  }
+
+  function settingsChanged() {
+    settingsRevision++;
+    onSettingsChanged?.();
+  }
+
+  function configure(defaults) {
+    let changed = false;
+    for (const [kind, enabled] of Object.entries(defaults)) {
+      if (setSetting(kind, overrides[kind] ?? enabled)) changed = true;
+    }
+    if (changed) settingsChanged();
+  }
+
+  function previewSettings() {
+    return { ...preview };
+  }
+
   function settings() {
     return {
+      ...previewSettings(),
+      revision: settingsRevision,
       cli: Boolean(access.cli),
       mcp: Boolean(access.mcp),
       cliSession: access.cli ? session : undefined,
@@ -359,11 +390,14 @@ export function createAgent({ buildState, directory }) {
       if (req.headers.origin !== requestOrigin) return forbid();
       try {
         const { kind, enabled } = await readRequest(req) ?? {};
-        if (!Object.hasOwn(access, kind) || typeof enabled !== 'boolean') {
+        if (typeof kind !== 'string' || (!Object.hasOwn(access, kind) && !Object.hasOwn(preview, kind))
+            || typeof enabled !== 'boolean') {
           res.writeHead(400).end();
           return;
         }
-        setAccess(kind, enabled);
+        const changed = setSetting(kind, enabled);
+        overrides[kind] = enabled;
+        if (changed) settingsChanged();
         json(settings());
       } catch {
         res.writeHead(500).end();
@@ -420,7 +454,7 @@ export function createAgent({ buildState, directory }) {
     }
   }
 
-  return { start, close, serve, log };
+  return { start, close, serve, log, configure, previewSettings };
 }
 
 async function readRequest(req) {

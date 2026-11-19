@@ -216,11 +216,15 @@ impl Wheel {
                 }
             }
             let frame = font::clip(parent, width, WINDOW_HEIGHT, 22)?;
+            lv::inspect_name(frame, c"AerisUI.NumericWheelFrame");
+            lv::reload_label(frame, spec.label);
             lvx_object_align(frame, 1, x, window_y);
             lv::style(frame, LV_STYLE_BORDER_WIDTH, 4);
             lv::style(frame, LV_STYLE_BORDER_OPA, 255);
             // 触摸层独立滚动，数字和边框留在固定的裁剪区域。
             let scroll = font::clip(parent, width, WINDOW_HEIGHT, 0)?;
+            lv::inspect_name(scroll, c"AerisUI.NumericWheelColumn");
+            lv::reload_label(scroll, spec.label);
             lvx_object_align(scroll, 1, x, window_y);
             for property in [16, 17, 18, 19] {
                 lv::style(scroll, property, 0);
@@ -248,6 +252,7 @@ impl Wheel {
     }
 
     fn select(&self, active: bool) {
+        lv::reload_value(self.frame, i32::from(active));
         lv::style(
             self.frame,
             BORDER_COLOR,
@@ -260,6 +265,10 @@ impl Wheel {
 
     fn paint(&self, position: i32) {
         let center = nearest_step(position);
+        lv::reload_value(
+            self.scroll,
+            i32::from(value_at(center, self.spec.min, self.spec.max)),
+        );
         let offset = center * STEP - position;
         if self.offset.replace(offset) != offset {
             lv::style(self.track, lv::TRANSLATE_Y, offset as u32);

@@ -13,6 +13,7 @@ import { XCircleIcon } from '@phosphor-icons/react/dist/csr/XCircle';
 import { Button, Input, Popover, Switch } from '@heroui/react';
 import { useLayoutEffect, useRef, useState } from 'react';
 import { Smooth, popoverStroke } from './smooth';
+import { ScrollPane } from './scroll-pane';
 
 export type LogLevel = 'log' | 'info' | 'error' | 'warning' | 'debug';
 export type Log = { level: LogLevel; source: '构建' | '运行'; text: string; device?: string };
@@ -95,7 +96,8 @@ export function Console({ logs, clearLogs, hidden }: { logs: Log[]; clearLogs: (
       </Popover>
     </div></Smooth>
     <div className="debug-console-body" data-categories={showCategories}>
-      {showCategories && <Smooth radius={8}><nav className="debug-panel-surface debug-console-categories" aria-label="日志类别">
+      {showCategories && <ScrollPane className="debug-panel-surface" contentClassName="debug-console-categories"
+        viewport={{ role: 'navigation', 'aria-label': '日志类别' }}>
         {categories.map(({ id, name, icon: Icon }) => <Button key={id} variant="ghost" className="debug-sidebar-row debug-console-category"
           aria-pressed={category === id} data-active={category === id} onPress={() => { atEnd.current = true; setCategory(id); }}>
           <CaretDownIcon className="debug-console-caret" size={10} weight="bold" aria-hidden="true" />
@@ -103,12 +105,12 @@ export function Console({ logs, clearLogs, hidden }: { logs: Log[]; clearLogs: (
           <span>{name}</span>
           <span className="debug-console-count">{logs.filter((entry) => matches(entry, id)).length}</span>
         </Button>)}
-      </nav></Smooth>}
-      <Smooth radius={8}><div className="debug-panel-surface debug-console-output" ref={output} role="region" aria-label="日志输出" tabIndex={0}
-        onScroll={(event) => {
+      </ScrollPane>}
+      <ScrollPane className="debug-panel-surface" contentClassName="debug-console-output"
+        viewport={{ ref: output, role: 'region', 'aria-label': '日志输出', onScroll: (event) => {
           const panel = event.currentTarget;
           atEnd.current = panel.scrollHeight - panel.clientHeight - panel.scrollTop < 4;
-        }}>
+        } }}>
         {visible.length ? <ol>
           {visible.map((entry, index) => {
             const level = entry.level === 'log' ? undefined : levels[entry.level];
@@ -121,7 +123,7 @@ export function Console({ logs, clearLogs, hidden }: { logs: Log[]; clearLogs: (
             </li>;
           })}
         </ol> : <p className="debug-empty">{logs.length ? '未找到匹配的日志' : '暂无日志'}</p>}
-      </div></Smooth>
+      </ScrollPane>
     </div>
   </section>;
 }

@@ -232,6 +232,7 @@ impl Checkbox {
                 appearance: Appearance::for_state(state),
                 motion: None,
             };
+            lv::reload_value(root, state as i32);
             checkbox.paint();
             Some(checkbox)
         }
@@ -247,6 +248,7 @@ impl Checkbox {
 
     pub fn set_state(&mut self, state: State) {
         self.state = state;
+        lv::reload_value(self.root, state as i32);
         self.motion = None;
         self.appearance = Appearance::for_state(state);
         self.paint();
@@ -265,6 +267,7 @@ impl Checkbox {
         }
         self.draw(now);
         self.state = state;
+        lv::reload_value(self.root, state as i32);
         let to = Appearance::for_state(state);
         self.motion = (self.appearance != to).then_some(Motion {
             from: self.appearance,
