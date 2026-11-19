@@ -24,7 +24,7 @@ Aeris UI 是面向 Canopus 的 Rust 组件库。默认构建提供布局、字�
 
 组件在 UI 线程创建。调用方在页面销毁时清理组件句柄，在事件回调中转交事件。滚轮支持 1–3 列，范围为 `0..=99` 内的闭区间，每列有独立标签和初值。滑块在松手时报告确认结果，实际操作由应用决定。
 
-`device::display_profile()` 提供当前屏幕的 `Viewport`。`Viewport::content()` 返回相对页面根对象的矩形安全区，可交给 `layout::compute` 或宽度可变的组件，例如 `HeaderBar::new_in`、`cards::jump_card_in` 和 `option_grid::grid_in`。DevBox 可以在 10 Pro、手环 11、圆屏和方屏之间切换；详情与完成面板、原生弹窗模糊仍使用 10 Pro 的尺寸。
+`device::display_profile()` 提供当前屏幕的 `Viewport`。`Viewport::content()` 返回相对页面根对象的矩形安全区，可交给 `layout::compute` 或宽度可变的组件，例如 `HeaderBar::new_in`、`cards::jump_card_in` 和 `option_grid::grid_in`。DevBox 可以在 10 Pro、手环 11、圆屏和方屏之间切换；DevBox 弹窗和结果浮层的背景模糊按当前画布尺寸生成。原生弹窗模糊目前仅支持 10 Pro。
 
 Gallery 使用同一套页面源码，分页和滚动容器取 `Viewport::bounds()` 铺满屏幕。`HeaderBar::new_for_viewport` 的 `HeaderStyle::Navigation` 在手环 11 使用同一个标题随滚动从 7 apx 平滑缩至 4.5 apx，在 10 Pro 保留返回和大标题切换。`page::scroll_bars` 根据实际挂载的标题栏、分页栏设置上下留白，子组件从留白后的原点开始排布，页面不需要额外放置占位对象。也可用 `page::scroll_with_bars` 一次创建并配置滚动区域。
 

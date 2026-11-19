@@ -23,6 +23,8 @@ const ICON_DELAY_MS: u32 = 96;
 const ICON_DURATION_MS: u32 = 168;
 const DETAIL_DISC_SIZE: i32 = 72;
 const DETAIL_CENTER_Y: i32 = 198;
+const DETAIL_BOTTOM_GAP: i32 = 10;
+const BODY_LINE_SPACING: u32 = 1;
 pub const DEFAULT_TIMEOUT_MS: u32 = 4000;
 pub const DEFAULT_FIRST_STAGE_MS: u32 = 550;
 pub(super) const DETAIL_DURATION_MS: u32 = 320;
@@ -147,8 +149,11 @@ pub unsafe fn show_with_options_in(
     let safe = viewport.content();
     let capsule = viewport == DisplayProfile::BAND_11.viewport;
     let wide = viewport == DisplayProfile::REDMI_WATCH.viewport;
-    let (center_y, title_center, detail_center) = if capsule {
-        (256, 448, 200)
+    let stock = viewport == Viewport::BAND_10_PRO;
+    let (center_y, title_center, mut detail_center) = if capsule {
+        (256, 448, 180)
+    } else if stock {
+        (CENTER_Y, TITLE_CENTER_Y, 178)
     } else if wide {
         (234, 448, 200)
     } else {
@@ -160,9 +165,25 @@ pub unsafe fn show_with_options_in(
     };
     let line = viewport.apx(Apx::new(5));
     let text_y = title_center - line / 2;
-    let detail_title = detail_center + DETAIL_DISC_SIZE / 2 + 16;
-    let body_y = detail_title + line + 12;
-    let body_height = safe.bottom() - body_y - 12;
+    let compact_detail = capsule || stock;
+    let title_offset = DETAIL_DISC_SIZE / 2 + if compact_detail { 12 } else { 16 };
+    let body_offset = title_offset + line + if compact_detail { 8 } else { 12 };
+    let body_bottom = if compact_detail {
+        safe.bottom()
+            .min(bounds.bottom() - header::height_in(viewport) - DETAIL_BOTTOM_GAP)
+    } else {
+        safe.bottom() - 12
+    };
+    if compact_detail {
+        // The narrower screen needs more lines for the same description.
+        // Move the whole detail group up to leave room above the bottom inset.
+        let body_lines = if capsule { 7 } else { 4 };
+        let body_budget = body_lines * (line + BODY_LINE_SPACING as i32 + 1);
+        detail_center = detail_center.min(body_bottom - body_offset - body_budget);
+    }
+    let detail_title = detail_center + title_offset;
+    let body_y = detail_center + body_offset;
+    let body_height = body_bottom - body_y;
     let disc_size = (if capsule { 96 } else { DISC_SIZE }).min(safe.w);
     let inset = if capsule { 10 } else { TEXT_INSET };
     let text_width = safe.w - 2 * inset;
@@ -174,7 +195,7 @@ pub unsafe fn show_with_options_in(
     };
     let (disc, glyph, text, body) = unsafe {
         lv::inspect_name(layers.surface, c"AerisUI.ConfirmationOverlay");
-        if viewport == Viewport::BAND_10_PRO {
+        if stock {
             for x in [0, bounds.w / 2] {
                 let shade = lv::image(layers.content, assets::HEADER_BACKGROUND, x, 0);
                 if !shade.is_null() {
@@ -230,7 +251,7 @@ pub unsafe fn show_with_options_in(
                 Font::Small24,
                 crate::TextSize::Body.apx(),
             );
-            lv::style(label, lv::TEXT_LINE_SPACE, 1);
+            lv::style(label, lv::TEXT_LINE_SPACE, BODY_LINE_SPACING);
             lvx_label_set_long_mode(label, 1);
             lvx_object_clear_flag(label, lv::CLICKABLE | lv::SCROLLABLE);
             label

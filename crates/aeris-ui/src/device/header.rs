@@ -376,7 +376,7 @@ impl HeaderBar {
             )),
             _ => None,
         };
-        let height = 86;
+        let height = height_in(viewport);
         let shrinking =
             (options.large_title && options.style.supports_large_title() && edge.is_none())
                 .then(|| ShrinkingTitleLayout::new(viewport));
@@ -566,6 +566,14 @@ impl HeaderBar {
 impl page::PageBar for HeaderBar {
     fn scroll_inset(&self) -> i32 {
         self.height
+    }
+}
+
+pub(super) fn height_in(viewport: Viewport) -> i32 {
+    if viewport == DisplayProfile::BAND_11.viewport {
+        86
+    } else {
+        HEADER_HEIGHT
     }
 }
 

@@ -9,9 +9,7 @@
 #include <string.h>
 
 enum {
-    STOCK_WIDTH = 336, STOCK_HEIGHT = 480,
-    BLUR_SCALE = 4, BLUR_RADIUS = 2, BLUR_BRIGHTNESS = 35,
-    BLUR_WIDTH = STOCK_WIDTH / BLUR_SCALE, BLUR_HEIGHT = STOCK_HEIGHT / BLUR_SCALE
+    BLUR_SCALE = 4, BLUR_RADIUS = 2, BLUR_BRIGHTNESS = 35
 };
 
 static uint32_t *framebuffer;
@@ -41,20 +39,8 @@ static FontData font_data[7][8];
 
 typedef uint8_t Bgr[3];
 
-static Bgr blur_pixels[BLUR_HEIGHT][BLUR_WIDTH];
-static Bgr blur_scratch[BLUR_HEIGHT][BLUR_WIDTH];
-static uint16_t blur_bitmap[BLUR_HEIGHT][BLUR_WIDTH];
-static const lv_image_dsc_t blur_image = {
-    .header = {
-        .magic = LV_IMAGE_HEADER_MAGIC,
-        .cf = LV_COLOR_FORMAT_RGB565,
-        .w = BLUR_WIDTH,
-        .h = BLUR_HEIGHT,
-        .stride = sizeof(blur_bitmap[0]),
-    },
-    .data_size = sizeof(blur_bitmap),
-    .data = (const uint8_t *)blur_bitmap,
-};
+static lv_draw_buf_t *blur_bitmap;
+static lv_image_dsc_t blur_image;
 
 extern int aeris_devbox_mount(void);
 
@@ -111,10 +97,6 @@ EM_JS(void, browser_display_size, (int *width, int *height), {
     HEAP32[height >>> 2] = Module.galleryDevice.height;
 });
 
-EM_JS(bool, browser_uses_stock_blur, (void), {
-    return Module.galleryDevice.id === "xiaomi-band-10-pro-3.101.043";
-});
-
 EM_JS(void, show_error, (void), {
     Module.galleryError();
 });
@@ -162,61 +144,90 @@ bool gallery_asset(const char *name, size_t name_len, uint8_t *bytes, size_t len
 }
 
 /* 以设备的采样比例和滤波半径生成独立的弹窗背景。 */
-static void blur_pass(Bgr input[BLUR_HEIGHT][BLUR_WIDTH],
-                      Bgr output[BLUR_HEIGHT][BLUR_WIDTH], bool vertical) {
-    const int limit = vertical ? BLUR_HEIGHT : BLUR_WIDTH;
-    for (int y = 0; y < BLUR_HEIGHT; y++) {
-        for (int x = 0; x < BLUR_WIDTH; x++) {
+static void blur_pass(const Bgr *input, Bgr *output, int width, int height, bool vertical) {
+    const int limit = vertical ? height : width;
+    for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
             const int position = vertical ? y : x;
             const int start = LV_MAX(position - BLUR_RADIUS, 0);
             const int end = LV_MIN(position + BLUR_RADIUS, limit - 1);
             for (int channel = 0; channel < 3; channel++) {
                 unsigned sum = 0;
                 for (int i = start; i <= end; i++) {
-                    sum += vertical ? input[i][x][channel] : input[y][i][channel];
+                    sum += input[vertical ? i * width + x : y * width + i][channel];
                 }
-                output[y][x][channel] = sum / (end - start + 1);
+                output[y * width + x][channel] = sum / (end - start + 1);
             }
         }
     }
 }
 
 const lv_image_dsc_t *gallery_capture_backdrop(lv_obj_t *root) {
-    if (!browser_uses_stock_blur()) return NULL;
     lv_draw_buf_t *snapshot = lv_snapshot_take(root, LV_COLOR_FORMAT_XRGB8888);
     if (!snapshot) return NULL;
-    if (snapshot->header.w != STOCK_WIDTH || snapshot->header.h != STOCK_HEIGHT) {
+    const int source_width = snapshot->header.w;
+    const int source_height = snapshot->header.h;
+    const int width = (source_width + BLUR_SCALE - 1) / BLUR_SCALE;
+    const int height = (source_height + BLUR_SCALE - 1) / BLUR_SCALE;
+    if (!width || !height) {
         lv_draw_buf_destroy(snapshot);
         return NULL;
     }
-
-    for (int y = 0; y < BLUR_HEIGHT; y++) {
-        for (int x = 0; x < BLUR_WIDTH; x++) {
+    Bgr *pixels = malloc((size_t)width * height * sizeof(Bgr) * 2);
+    if (!pixels) {
+        lv_draw_buf_destroy(snapshot);
+        return NULL;
+    }
+    Bgr *scratch = pixels + (size_t)width * height;
+    for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
+            // 边缘不足一个采样块时只读取实际像素，兼容不能被 4 整除的屏幕。
+            const int block_width = LV_MIN(BLUR_SCALE, source_width - x * BLUR_SCALE);
+            const int block_height = LV_MIN(BLUR_SCALE, source_height - y * BLUR_SCALE);
             for (int channel = 0; channel < 3; channel++) {
                 unsigned sum = 0;
-                for (int dy = 0; dy < BLUR_SCALE; dy++) {
+                for (int dy = 0; dy < block_height; dy++) {
                     const uint8_t *row = snapshot->data + (y * BLUR_SCALE + dy) * snapshot->header.stride;
-                    for (int dx = 0; dx < BLUR_SCALE; dx++) {
+                    for (int dx = 0; dx < block_width; dx++) {
                         sum += row[(x * BLUR_SCALE + dx) * 4 + channel];
                     }
                 }
-                blur_pixels[y][x][channel] = sum / (BLUR_SCALE * BLUR_SCALE);
+                pixels[y * width + x][channel] = sum / (block_width * block_height);
             }
         }
     }
     lv_draw_buf_destroy(snapshot);
 
-    blur_pass(blur_pixels, blur_scratch, false);
-    blur_pass(blur_scratch, blur_pixels, true);
-    for (int y = 0; y < BLUR_HEIGHT; y++) {
-        for (int x = 0; x < BLUR_WIDTH; x++) {
-            const uint8_t *pixel = blur_pixels[y][x];
+    blur_pass(pixels, scratch, width, height, false);
+    blur_pass(scratch, pixels, width, height, true);
+    if (!blur_bitmap || blur_bitmap->header.w != width || blur_bitmap->header.h != height) {
+        lv_draw_buf_t *bitmap = lv_draw_buf_create(width, height, LV_COLOR_FORMAT_RGB565, 0);
+        if (!bitmap) {
+            free(pixels);
+            return NULL;
+        }
+        lv_image_cache_drop(&blur_image);
+        if (blur_bitmap) lv_draw_buf_destroy(blur_bitmap);
+        blur_bitmap = bitmap;
+        blur_image = (lv_image_dsc_t) {
+            .header = bitmap->header,
+            .data_size = bitmap->data_size,
+            .data = bitmap->data,
+        };
+        // 此处传入的是图片描述符，不能让解码器把它当成完整的 draw buffer。
+        blur_image.header.flags &= ~LV_IMAGE_FLAGS_ALLOCATED;
+    }
+    for (int y = 0; y < height; y++) {
+        uint16_t *row = (uint16_t *)(blur_bitmap->data + y * blur_bitmap->header.stride);
+        for (int x = 0; x < width; x++) {
+            const uint8_t *pixel = pixels[y * width + x];
             const unsigned b = pixel[0] * BLUR_BRIGHTNESS / 100;
             const unsigned g = pixel[1] * BLUR_BRIGHTNESS / 100;
             const unsigned r = pixel[2] * BLUR_BRIGHTNESS / 100;
-            blur_bitmap[y][x] = (r >> 3) << 11 | (g >> 2) << 5 | (b >> 3);
+            row[x] = (r >> 3) << 11 | (g >> 2) << 5 | (b >> 3);
         }
     }
+    free(pixels);
     lv_image_cache_drop(&blur_image);
     return &blur_image;
 }

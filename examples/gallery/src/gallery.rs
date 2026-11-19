@@ -581,7 +581,7 @@ unsafe fn feedback_page(root: Obj, body: Obj, viewport: Viewport, first: i32) {
             }],
             "Apply\0",
             "Cancel\0",
-            accept_dialog,
+            dialog::dismiss,
         );
         if !dialog.is_null() {
             ui::button_in(
@@ -623,8 +623,4 @@ extern "C" fn next_sample(_event: Obj) {
         label[..8].copy_from_slice(&text);
         unsafe { lvx_label_set_text(state.fallback, label.as_ptr()) };
     }
-}
-
-extern "C" fn accept_dialog(_event: Obj) {
-    dialog::hide_confirm();
 }

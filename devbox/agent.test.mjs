@@ -118,6 +118,54 @@ test('Agent CLI observes and operates Gallery in DemoMode', { timeout: 150_000 }
   assert.deepEqual((await agent('logs', '--since', String(cursor))).entries, []);
   await expectError('TIMEOUT', 'wait', '--after', String(buildId), '--timeout', '200');
 
+  const descriptor = JSON.parse(await readFile(session, 'utf8'));
+  const request = async (command, device, args = {}) => {
+    const response = await fetch(descriptor.url + '/devbox-agent', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + descriptor.token },
+      body: JSON.stringify({ command, device, ...args }),
+    });
+    const result = await response.json();
+    assert.equal(result.ok, true, JSON.stringify(result.error));
+    return result;
+  };
+  await agent('back', '--preview', narrow.previewId, '--device', band11);
+  for (const device of ['xiaomi-band-10-pro-3.101.043', band11]) {
+    let screen = await request('snapshot', device);
+    const dot = screen.nodes.filter((node) => node.component === 'AerisUI.PageIndicatorDot')
+      .sort((a, b) => a.x - b.x).at(-1);
+    await request('tap', device, { points: [dot.x + 3, dot.y + 3], preview: screen.previewId });
+    await delay(350);
+    for (const action of ['confirm', 'cancel', 'back']) {
+      screen = await request('snapshot', device);
+      const open = screen.nodes.find((node) => node.value === 'Open Dialog');
+      await request('tap', device, { points: [open.x + 20, open.y + 15], preview: screen.previewId });
+      await delay(350);
+      screen = await request('snapshot', device);
+      if (action === 'back') {
+        await request('back', device, { preview: screen.previewId });
+      } else {
+        const label = screen.nodes.find((node) => node.value === (action === 'confirm' ? 'Apply' : 'Cancel'));
+        const points = device === band11
+          ? [106, action === 'confirm' ? 477 : 43]
+          : [label.x + 30, label.y + 15];
+        await request('tap', device, { points, preview: screen.previewId });
+      }
+      let surface, content;
+      for (let attempt = 0; attempt < 10; attempt++) {
+        const closing = await request('snapshot', device);
+        surface = closing.nodes.find((node) => node.component === 'AerisUI.ConfirmDialog');
+        content = closing.nodes.find((node) => node.parent === surface.id && node.kind === 3);
+        if (surface.hidden || content.opacity < 255) break;
+        await delay(10);
+      }
+      assert.equal(surface.hidden, false, `${device}: ${action} keeps the dialog visible during its exit`);
+      assert(content.opacity > 0 && content.opacity < 255, `${device}: ${action} animates the content out`);
+      await delay(300);
+      assert((await request('snapshot', device)).nodes.find((node) => node.id === surface.id).hidden);
+    }
+  }
+
   assert.notEqual((await agent('reload')).previewId, previewId);
   await expectError('STALE_PREVIEW', 'tap', x, y, '--preview', previewId);
   await stop();
@@ -269,4 +317,43 @@ test('Agent scopes live preview, input and scenes to the selected device', { tim
   const stockAfter = await agent('status');
   assert.equal(stockAfter.scene, 'layout-settings');
   assert.equal(stockAfter.preview.previewId, stock.previewId);
+
+  // Both modal components must capture a real blurred image at the device's size.
+  for (const device of ['xiaomi-band-10-pro-3.101.043', capsule, 'redmi-watch', 'round-390']) {
+    for (const [scene, component] of [
+      ['adaptive-dialog', 'AerisUI.ConfirmDialog'],
+      ['adaptive-confirmation', 'AerisUI.ConfirmationOverlay'],
+    ]) {
+      await agent('scene', scene, '--device', device);
+      let modal;
+      for (let attempt = 0; attempt < 40; attempt++) {
+        modal = await agent('snapshot', '--device', device);
+        const surface = modal.nodes.find((node) => node.component === component && !node.hidden);
+        const backdrop = surface && modal.nodes.find((node) => node.parent === surface.id && node.kind === 2 && !node.hidden);
+        if (backdrop?.opacity === 255) break;
+        await delay(40);
+      }
+      const surface = modal.nodes.find((node) => node.component === component && !node.hidden);
+      assert(surface, `${device}: ${component} is visible`);
+      assert.equal(surface.backgroundOpacity, 0, `${device}: blur replaces the fallback shade`);
+      const backdrop = modal.nodes.find((node) => node.parent === surface.id && node.kind === 2 && !node.hidden);
+      assert(backdrop, `${device}: ${component} has a captured backdrop`);
+      assert.equal(backdrop.opacity, 255);
+      assert.deepEqual([backdrop.width, backdrop.height], [Math.ceil(modal.width / 4), Math.ceil(modal.height / 4)]);
+      if ([capsule, 'xiaomi-band-10-pro-3.101.043'].includes(device) && scene === 'adaptive-confirmation') {
+        // Wait for the details transition before checking its final placement.
+        const expectedY = device === capsule ? 214 : 244;
+        const headerHeight = device === capsule ? 86 : 94;
+        for (let attempt = 0; attempt < 40; attempt++) {
+          modal = await agent('snapshot', '--device', device);
+          const body = modal.nodes.find((node) => node.value === 'Your timer is ready to use.');
+          if (body?.opacity === 255 && body.y === expectedY) break;
+          await delay(40);
+        }
+        const body = modal.nodes.find((node) => node.value === 'Your timer is ready to use.');
+        assert.equal(body.y, expectedY);
+        assert.equal(modal.height - body.y - body.height, headerHeight + 10);
+      }
+    }
+  }
 });

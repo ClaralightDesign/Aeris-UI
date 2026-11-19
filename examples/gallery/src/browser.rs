@@ -51,8 +51,8 @@ pub extern "C" fn close_inputs(_: Obj) {
     queue_navigation(show_gallery);
 }
 
-pub extern "C" fn close_gallery(_: Obj) {
-    dialog::hide_confirm();
+pub extern "C" fn close_gallery(event: Obj) {
+    dialog::dismiss(event);
 }
 
 #[unsafe(no_mangle)]
