@@ -87,6 +87,8 @@ aeris_ui::devbox_app!(browser::start);
 
 「重新构建」和「清理构建缓存」都会排队构建。清理操作会先移除当前项目的 DevBox Cargo 和 LVGL 编译缓存，期间可以继续使用当前预览。浏览器整页刷新会重新启动预览应用，Agent 保持自己的重载行为。
 
+图层面板自动识别 DevBox 背景快照生成的模糊，包括对话框和 ConfirmationOverlay。自定义组件使用自己的模糊绘制逻辑时，可在 DevBox 构建中调用 `aeris_ui::devbox::set_backdrop_blur(object, radius_px)`，报告该对象的实际模糊半径（设备像素）。传入 0 可清除标记。
+
 ## Agent 接入
 
 安装支持 Agent 接入的 Cargo 启动器，并将应用的 Aeris UI 依赖更新到包含 Agent 接入的修订。在应用目录安装无头 Chromium，然后运行 DevBox。

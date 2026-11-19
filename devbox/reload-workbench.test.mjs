@@ -75,9 +75,9 @@ test('Workbench keeps both devices live during reload, rebuild and recovery', { 
     await page.route('https://cdn.cnbj1.fds.api.mi-img.com/**', (route) => route.abort());
     await page.goto(origin);
 
-    const iframe = (device) => page.locator('iframe:not([data-staging])[src*="device=' + device + '"]');
-    async function frame(device) {
-      const element = await iframe(device).elementHandle();
+    const iframe = (device, workbench = page) => workbench.locator('iframe:not([data-staging])[src*="device=' + device + '"]');
+    async function frame(device, workbench = page) {
+      const element = await iframe(device, workbench).elementHandle();
       const result = await element.contentFrame();
       await result.waitForFunction(() => window.aerisDebugger?.snapshot());
       return result;
@@ -103,6 +103,190 @@ test('Workbench keeps both devices live during reload, rebuild and recovery', { 
       const box = await canvas.boundingBox();
       const { width, height } = await canvas.evaluate((element) => ({ width: element.width, height: element.height }));
       return [box.x + (x + 0.5) * box.width / width, box.y + (y + 0.5) * box.height / height];
+    }
+    const panels = await browser.newPage({ viewport: { width: 1440, height: 960 }, colorScheme: 'dark' });
+    try {
+      await panels.route('https://cdn.cnbj1.fds.api.mi-img.com/**', (route) => route.abort());
+      await panels.goto(origin);
+      const preview = await frame(devices[0], panels);
+      const tab = (name) => panels.locator('.debug-inspector').getByRole('button', { name, exact: true });
+      const layerRows = panels.locator('.debug-layer-row');
+      const scene = panels.locator('.debug-layer-scene');
+      const shapes = scene.locator('.debug-layer-outline');
+      const details = panels.getByRole('region', { name: '图层元素详情' });
+      const start = tab('开始录制'), stop = tab('停止录制');
+      const metrics = () => preview.evaluate(() => window.aerisDebugger.performance.read());
+      await tab('图层').click();
+      await until(() => shapes.count());
+      assert.match(await layerRows.last().innerText(), /^lv_screen\b/);
+      assert.match(await scene.locator('.debug-layer-plane').first().getAttribute('transform'), /^matrix\(1 0 0 1 /);
+      const zoomButton = tab('图层缩放');
+      const mainZoom = panels.getByRole('button', { name: '缩放', exact: true });
+      const zoomGroup = scene.locator('.debug-layer-origin > g');
+      const zoomScale = () => zoomGroup.evaluate((element) => element.getScreenCTM().a);
+      const buttonWidth = (await zoomButton.boundingBox()).width;
+      assert.equal(await zoomScale(), .5);
+      await scene.focus();
+      await panels.keyboard.press('Control+Equal');
+      await until(async () => Math.abs(await zoomScale() - .6) < 1e-6 && (await zoomButton.boundingBox()).width > buttonWidth + 20);
+      assert.equal(await zoomButton.textContent(), '120.0%');
+      assert.equal(await mainZoom.textContent(), '100.0%');
+      await panels.keyboard.press('Control+Minus');
+      await until(async () => await zoomScale() === .5);
+
+      const area = await scene.boundingBox();
+      const anchor = { x: Math.round(area.x + area.width * .62), y: Math.round(area.y + area.height * .6) };
+      const anchorInView = () => zoomGroup.evaluate((element, { x, y }) => {
+        const point = new DOMPoint(x, y).matrixTransform(element.getScreenCTM().inverse());
+        return { x: point.x, y: point.y };
+      }, anchor);
+      const target = await anchorInView();
+      await panels.mouse.move(anchor.x, anchor.y);
+      await panels.keyboard.down('Control');
+      await panels.mouse.wheel(0, -40);
+      await panels.keyboard.up('Control');
+      await until(async () => Math.abs(await zoomScale() - .5 * Math.exp(.4)) < 1e-6);
+      const anchored = await anchorInView();
+      assert(Math.hypot(anchored.x - target.x, anchored.y - target.y) < 1);
+      await panels.keyboard.press('Control+0');
+      await until(async () => await zoomScale() === .5);
+      await scene.evaluate((element, { x, y }) => {
+        for (const [name, scale] of [['gesturestart', 1], ['gesturechange', 1.5], ['gestureend', 1.5]]) {
+          element.dispatchEvent(Object.assign(new MouseEvent(name, { clientX: x, clientY: y, bubbles: true, cancelable: true }), { scale }));
+        }
+      }, anchor);
+      await until(async () => await zoomScale() === .75);
+      await zoomButton.click();
+      const zoomMenu = panels.getByRole('dialog', { name: '图层缩放', exact: true });
+      await zoomMenu.getByRole('button', { name: '缩放至 50%', exact: true }).click();
+      await until(async () => await zoomScale() === .25);
+      await scene.focus();
+      await panels.keyboard.press('Control+0');
+      await until(async () => await zoomGroup.getAttribute('transform') === 'translate(0 0) scale(0.5)');
+      await mainZoom.focus();
+      await panels.keyboard.press('Control+Equal');
+      await until(async () => await mainZoom.textContent() === '120.0%');
+      assert.equal(await zoomScale(), .5);
+      await panels.keyboard.press('Control+0');
+      await until(async () => await mainZoom.textContent() === '100.0%');
+
+      const circle = scene.locator('ellipse[data-shape=circle]').first();
+      const id = await circle.getAttribute('data-layer-id');
+      const circleRow = layerRows.and(panels.locator(`[data-node-id="${id}"]`));
+      await circleRow.click();
+      assert.equal(await circle.getAttribute('data-selected'), 'true');
+      assert.equal(await panels.locator('.debug-layer-highlight [data-layer-id]').getAttribute('data-layer-id'), id);
+      await details.getByRole('button', { name: '查看布局' }).click();
+      await details.getByText('内容区尺寸', { exact: true }).waitFor();
+
+      const center = await circle.evaluate((element) => {
+        const { x, y } = new DOMPoint(element.cx.baseVal.value, element.cy.baseVal.value).matrixTransform(element.getScreenCTM());
+        return { x, y, target: document.elementFromPoint(x, y)?.getAttribute('data-layer-id') };
+      });
+      assert.equal(center.target, id);
+      await layerRows.last().click();
+      await panels.mouse.click(center.x, center.y);
+      await until(async () => await circleRow.getAttribute('aria-pressed') === 'true');
+      const root = await shapes.first().getAttribute('data-layer-id');
+      const front = await shapes.last().getAttribute('data-layer-id');
+      const rotate = (key, presses) => scene.evaluate((surface, { key, presses }) => {
+        for (let i = 0; i < presses; i++) surface.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+      }, { key, presses });
+      for (const key of ['ArrowRight', 'ArrowUp']) {
+        await rotate(key, 30);
+        await until(async () => await shapes.first().getAttribute('data-layer-id') === front);
+        await rotate(key, 30);
+        await until(async () => await shapes.first().getAttribute('data-layer-id') === root);
+      }
+      await tab('重置图层视角').click();
+
+      await tab('性能').click();
+      const beforeIdle = (await until(metrics)).submissions;
+      await start.click();
+      await delay(420);
+      await stop.click();
+      const before = (await metrics()).submissions;
+      if (before === beforeIdle) await panels.getByText('录制期间没有发生绘制。', { exact: true }).waitFor();
+      await start.click();
+      await tab('图层').click();
+      async function showGalleryPage(index) {
+        const dot = await preview.evaluate((index) => window.aerisDebugger.snapshot().nodes
+          .filter((item) => item.component === 'AerisUI.PageIndicatorDot').sort((a, b) => a.x - b.x)[index], index);
+        await panels.mouse.click(...await point(preview, dot.x + dot.width / 2, dot.y + dot.height / 2));
+      }
+      await showGalleryPage(1);
+      const capsule = await until(async () => await preview.evaluate(() => {
+        const { nodes, width } = window.aerisDebugger.snapshot();
+        const text = nodes.find((item) => item.value === 'Regular Button' && item.x >= 0 && item.x < width / 2);
+        return text && { text, button: nodes.find((item) => item.id === text.parent) };
+      }));
+      const rounded = scene.locator(`rect[data-layer-id="${capsule.button.id}"]`);
+      await rounded.waitFor();
+      assert.equal(Number(await rounded.getAttribute('rx')), capsule.button.height / 2);
+      assert.equal(await scene.locator(`rect[data-layer-id="${capsule.text.id}"]`).getAttribute('rx'), '0');
+      await preview.evaluate((id) => window.Module._gallery_inspect_backdrop_blur(id, 6), capsule.button.id);
+      const custom = rounded.locator('xpath=ancestor::*[contains(@class, "debug-layer-plane")]');
+      const customBlur = custom.locator('.debug-layer-backdrop-filter');
+      await customBlur.waitFor();
+      assert.equal(await customBlur.evaluate((element) => getComputedStyle(element).backdropFilter), 'blur(6px)');
+      assert(await custom.locator(`.debug-layer-backdrop-edge[rx="${capsule.button.height / 2}"]`).count());
+      await preview.evaluate((id) => window.Module._gallery_inspect_backdrop_blur(id, 0), capsule.button.id);
+      await customBlur.waitFor({ state: 'detached' });
+      await delay(450);
+      await tab('性能').click();
+      await stop.click();
+      const timeline = panels.getByRole('region', { name: '性能录制结果' });
+      const scrubber = timeline.getByRole('slider', { name: /绘制样本/ });
+      await scrubber.waitFor();
+      assert(Number(await scrubber.getAttribute('max')) > 0);
+      await until(async () => Number(await panels.locator('[data-metric=submissions]').innerText()) === (await metrics()).submissions);
+
+      await tab('图层').click();
+      await showGalleryPage(2);
+      const dialog = await until(async () => {
+        const label = await node(preview, 'Open Dialog');
+        return label?.x === 171 ? label : undefined;
+      });
+      await panels.mouse.click(...await point(preview, dialog.x + dialog.width / 2, dialog.y + dialog.height / 2));
+      const blur = scene.locator('.debug-layer-backdrop-filter');
+      await blur.waitFor();
+      const blurStyle = await blur.evaluate((element) => {
+        const style = getComputedStyle(element);
+        return { filter: style.backdropFilter, background: style.backgroundColor };
+      });
+      assert.match(blurStyle.filter, /^blur\([\d.]+px\)$/);
+      assert.equal(blurStyle.background, 'rgba(0, 0, 0, 0)');
+      await layerRows.filter({ hasText: '背景模糊' }).click();
+      assert.match(await details.locator('.debug-detail-header').innerText(), /背景模糊/);
+      const cancel = await node(preview, 'Cancel');
+      await panels.mouse.click(...await point(preview, cancel.x + cancel.width / 2, cancel.y + cancel.height / 2));
+      await blur.waitFor({ state: 'detached' });
+      const overlayButton = await node(preview, 'Neutral');
+      await panels.mouse.click(...await point(preview, overlayButton.x + overlayButton.width / 2, overlayButton.y + overlayButton.height / 2));
+      const overlayBackdrop = await until(() => preview.evaluate(() => {
+        const { layerNodes } = window.aerisDebugger.snapshot({ layers: true });
+        const surface = layerNodes.find((item) => item.component === 'AerisUI.ConfirmationOverlay' && !item.hidden);
+        return surface && layerNodes.find((item) => item.parent === surface.id && item.layerGeometry?.backdrop);
+      }));
+      const overlayPlane = scene.locator(`[data-layer-id="${overlayBackdrop.id}"]`)
+        .locator('xpath=ancestor::*[contains(@class, "debug-layer-plane")]');
+      await overlayPlane.locator('.debug-layer-backdrop-filter').waitFor();
+      assert(await overlayPlane.locator('.debug-layer-backdrop-edge[rx="40"]').count());
+
+      await tab('性能').click();
+      await start.click();
+      await panels.getByRole('button', { name: '小米手环 11', exact: true }).click();
+      await timeline.getByText('预览已切换，录制已结束', { exact: true }).waitFor();
+      await tab('图层').click();
+      await details.getByText('选择图层以查看元素详情', { exact: true }).waitFor();
+      await tab('性能').click();
+      await start.click();
+      const secondPreview = await frame(devices[1], panels);
+      await secondPreview.evaluate(() => window.Module.galleryError());
+      await timeline.getByText('预览运行失败，录制已结束', { exact: true }).waitFor();
+      await until(async () => await panels.locator('[data-metric=duration]').innerText() === '—');
+    } finally {
+      await panels.close();
     }
     const settings = page.locator('.debug-preview-menu');
     async function openSettings() {
@@ -275,6 +459,7 @@ test('Workbench keeps both devices live during reload, rebuild and recovery', { 
     };
     await hasScrollPane('region', 'LVGL 对象树');
     await hasScrollPane('region', '对象详情内容');
+    assert.equal(await inspector.getByText('渲染引擎', { exact: true }).count(), 0);
     await inspector.getByRole('button', { name: /^控制台/ }).click();
     await hasScrollPane('region', '日志输出');
     await hasScrollPane('navigation', '日志类别');
@@ -283,7 +468,9 @@ test('Workbench keeps both devices live during reload, rebuild and recovery', { 
     await hasScrollPane('group', '已打开的文件');
     await hasScrollPane('region', 'src/gallery.rs');
     await inspector.getByRole('button', { name: '图层', exact: true }).click();
-    await hasScrollPane('region', '图层内容');
+    await hasScrollPane('region', '图层列表');
+    await inspector.getByRole('button', { name: '性能', exact: true }).click();
+    await hasScrollPane('region', '性能内容');
 
     await page.setViewportSize({ width: 1000, height: 580 });
     await openSettings();

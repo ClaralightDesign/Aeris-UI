@@ -3,7 +3,6 @@ import { MagnifyingGlassIcon } from '@phosphor-icons/react/dist/csr/MagnifyingGl
 import { EyeIcon } from '@phosphor-icons/react/dist/csr/Eye';
 import { BracketsAngleIcon } from '@phosphor-icons/react/dist/csr/BracketsAngle';
 import { BugBeetleIcon } from '@phosphor-icons/react/dist/csr/BugBeetle';
-import { AtIcon } from '@phosphor-icons/react/dist/csr/At';
 import { Button, Input } from '@heroui/react';
 import { DevToolsTabs } from './devtools-tabs';
 import { useLayoutEffect, useRef, useState } from 'react';
@@ -48,7 +47,6 @@ type TreeProps = {
 
 export function Inspector({ nodes, selected, canvasSelection, onCanvasSelectionRevealed, select, hover }: TreeProps) {
   const [query, setQuery] = useState('');
-  const [tab, setTab] = useState('样式');
   const [collapsed, setCollapsed] = useState<Set<number>>(() => new Set());
   const selectedButton = useRef<HTMLButtonElement>(null);
   const byId = new Map(nodes.map((node) => [node.id, node]));
@@ -117,8 +115,14 @@ export function Inspector({ nodes, selected, canvasSelection, onCanvasSelectionR
         {filtering && nodes.length > 0 && !matching.size && <p className="debug-empty">未找到对象</p>}
       </ScrollPane>
     </section>
-    <section className="debug-details">
-      <DevToolsTabs label="对象详情" tabs={tabs} value={tab} onChange={setTab} />
+    <ElementDetails selected={selected} />
+  </>;
+}
+
+export function ElementDetails({ selected, layer }: { selected?: PreviewNode; layer?: boolean }) {
+  const [tab, setTab] = useState('样式');
+  return <section className="debug-details" aria-label={layer ? '图层元素详情' : undefined}>
+      {(selected || !layer) && <DevToolsTabs label="对象详情" tabs={tabs} value={tab} onChange={setTab} />}
       {selected && <>
         <Smooth radius={7}><div className="debug-detail-header">
           <EyeIcon size={16} aria-hidden="true" /> <span>{nodeName(selected)}</span>
@@ -128,8 +132,7 @@ export function Inspector({ nodes, selected, canvasSelection, onCanvasSelectionR
         <ScrollPane className="debug-detail-body" viewport={{ role: 'region', 'aria-label': '对象详情内容' }}>
           <NodeDetails node={selected} tab={tab} />
         </ScrollPane>
-        <Smooth radius={7}><div className="debug-detail-footer"><span>渲染引擎</span><span><AtIcon size={15} aria-hidden="true" /> LVGL 9.4</span></div></Smooth>
       </>}
-    </section>
-  </>;
+      {layer && !selected && <p className="debug-empty">选择图层以查看元素详情</p>}
+    </section>;
 }

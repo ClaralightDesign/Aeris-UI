@@ -12,11 +12,18 @@ type Viewport = Point & { percent: number; showZoomFeedback: boolean };
 type GestureEvent = MouseEvent & { scale: number };
 const home: Viewport = { x: 0, y: 0, percent: 100, showZoomFeedback: false };
 
+type ViewportOptions = {
+  preview?: RefObject<HTMLIFrameElement | null>;
+  frameReady?: number;
+  previewUrl?: string;
+  enabled?: boolean;
+  scope?: string;
+  customPrimaryDrag?: boolean;
+};
+
 export function useCanvasViewport(
   stage: RefObject<HTMLDivElement | null>,
-  preview: RefObject<HTMLIFrameElement | null>,
-  frameReady: number,
-  previewUrl: string,
+  { preview, frameReady, previewUrl, enabled, scope, customPrimaryDrag }: ViewportOptions,
 ) {
   const [viewport, setViewport] = useState(home);
   const [space, setSpace] = useState(false);
@@ -64,8 +71,9 @@ export function useCanvasViewport(
   useEffect(() => {
     const canvasStage = stage.current;
     if (!canvasStage) return;
-    const iframe = preview.current;
+    const iframe = preview?.current;
     const frame = iframe?.contentWindow;
+    const ready = () => enabled ?? Boolean(preview?.current);
     const cleanups: (() => void)[] = [];
     let blockClick = false;
     let frameWheel: { at: number; x: number; y: number; intent?: 'scroll' | 'back' | 'handled' } | undefined;
@@ -111,9 +119,12 @@ export function useCanvasViewport(
     }
 
     function keyDown(event: KeyboardEvent) {
-      if (event.defaultPrevented || event.isComposing || !preview.current) return;
+      if (event.defaultPrevented || event.isComposing || !ready()) return;
       const target = event.target as Element | null;
       if (target?.closest?.('input, textarea, select, [contenteditable]:not([contenteditable=false])')) return;
+      const scopedViewport = target?.closest?.('[data-zoom-scope]') ??
+        (event.currentTarget === window ? document.querySelector('[data-zoom-scope]:hover') : null);
+      if ((scopedViewport?.getAttribute('data-zoom-scope') || undefined) !== scope) return;
       if ((event.metaKey || event.ctrlKey) && !event.altKey) {
         if (event.key === '0') reset(true);
         else if (event.key === '+' || event.key === '=') zoomIn(true);
@@ -163,7 +174,7 @@ export function useCanvasViewport(
     function bindPointerInput(target: EventTarget, fromFrame: boolean) {
       const options = { capture: true, passive: false };
       bind(target, 'wheel', (raw) => {
-        if (!preview.current) return;
+        if (!ready()) return;
         const event = raw as WheelEvent;
         const zooming = event.ctrlKey || event.metaKey;
         if (fromFrame && !zooming && gesture.current === undefined && !pan.current) {
@@ -186,7 +197,7 @@ export function useCanvasViewport(
       }, options);
 
       bind(target, 'gesturestart', (event) => {
-        if (!preview.current) return;
+        if (!ready()) return;
         event.preventDefault();
         frameWheel = undefined;
         gesture.current = 1;
@@ -208,9 +219,10 @@ export function useCanvasViewport(
 
       bind(target, 'pointerdown', (raw) => {
         const event = raw as PointerEvent;
-        if (!preview.current || pan.current) return;
+        if (!ready() || pan.current) return;
         blockClick = false;
-        if (event.button !== 1 && !(event.button === 0 && (heldSpace.current || event.target === canvasStage))) return;
+        const primaryPan = event.button === 0 && (heldSpace.current || !customPrimaryDrag && event.target === canvasStage);
+        if (event.button !== 1 && !primaryPan) return;
         const capture = fromFrame ? event.target as Element : canvasStage!;
         event.preventDefault();
         event.stopPropagation();
@@ -258,7 +270,7 @@ export function useCanvasViewport(
       cleanups.forEach((cleanup) => cleanup());
       finishInteraction();
     };
-  }, [stage, preview, frameReady, previewUrl]);
+  }, [stage, preview, frameReady, previewUrl, enabled, scope, customPrimaryDrag]);
 
   return {
     viewport, scale: viewport.percent / 100 * BASE_SCALE, space, dragging,

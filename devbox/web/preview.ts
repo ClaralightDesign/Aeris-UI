@@ -1,4 +1,6 @@
 export type BoxEdges = [top: number, right: number, bottom: number, left: number];
+export type Affine = [a: number, b: number, c: number, d: number, e: number, f: number];
+type Backdrop = { x: number; y: number; width: number; height: number; opacity: number; radius: number };
 
 export type PreviewNode = {
   id: number;
@@ -39,17 +41,30 @@ export type PreviewNode = {
   alignment: number;
   checked: boolean;
   disabled: boolean;
+  layerGeometry?: { clipRadius: number; outline?: 'circle'; transform?: Affine; backdrop?: Backdrop };
 };
 
 export type Snapshot = {
   height: number;
   nodes: PreviewNode[];
+  layerNodes?: PreviewNode[];
   frameTime: number;
   memoryBytes: number;
 };
 
+export type RenderSample = { at: number; durationMs: number; submissions: number };
+export type PreviewPerformance = {
+  read: () => { lastRender: RenderSample; submissions: number; memoryBytes: number } | null;
+  subscribe: (listener: (sample: RenderSample | null) => void) => () => void;
+};
+
 export type PreviewWindow = Window & {
-  aerisDebugger?: { snapshot: () => Snapshot | null; screenshot: () => string | null; contains?: (x: number, y: number) => boolean };
+  aerisDebugger?: {
+    snapshot: (options?: { layers?: boolean }) => Snapshot | null;
+    screenshot: () => string | null;
+    contains?: (x: number, y: number) => boolean;
+    performance?: PreviewPerformance;
+  };
 };
 
 export type DeviceProfile = {
@@ -74,6 +89,7 @@ export function nodeClass(node: PreviewNode) {
 }
 
 export function nodeName(node: PreviewNode) {
+  if (node.layerGeometry?.backdrop && node.kind === 2 && !node.component) return '背景模糊';
   return node.className === 'NinePatch' ? node.className : node.component || nodeClass(node);
 }
 

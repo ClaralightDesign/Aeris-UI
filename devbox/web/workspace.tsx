@@ -1,5 +1,4 @@
 import { Button, Popover } from '@heroui/react';
-import { NumberInput } from '@claralight-design/react';
 import { ArrowClockwiseIcon } from '@phosphor-icons/react/dist/csr/ArrowClockwise';
 import { BroomIcon } from '@phosphor-icons/react/dist/csr/Broom';
 import { CameraPlusIcon } from '@phosphor-icons/react/dist/csr/CameraPlus';
@@ -11,25 +10,27 @@ import { CommandIcon } from '@phosphor-icons/react/dist/csr/Command';
 import { FadersIcon } from '@phosphor-icons/react/dist/csr/Faders';
 import { HammerIcon } from '@phosphor-icons/react/dist/csr/Hammer';
 import { LinkIcon } from '@phosphor-icons/react/dist/csr/Link';
-import { MagnifyingGlassPlusIcon } from '@phosphor-icons/react/dist/csr/MagnifyingGlassPlus';
 import { ProhibitInsetIcon } from '@phosphor-icons/react/dist/csr/ProhibitInset';
 import { RectangleIcon } from '@phosphor-icons/react/dist/csr/Rectangle';
 import { RectangleDashedIcon } from '@phosphor-icons/react/dist/csr/RectangleDashed';
 import { RulerIcon } from '@phosphor-icons/react/dist/csr/Ruler';
 import { SidebarSimpleIcon } from '@phosphor-icons/react/dist/csr/SidebarSimple';
 import { TerminalWindowIcon } from '@phosphor-icons/react/dist/csr/TerminalWindow';
-import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode } from 'react';
-import { createPortal } from 'react-dom';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode } from 'react';
 import Scritto from '@scritto/react';
 import { Inspector } from './inspector';
 import { DevToolsTabs } from './devtools-tabs';
 import { BoxHighlight, ElementCard } from './element-overlay';
 import { LayoutLens, LayoutSelection, layoutAreaForDevice, useLayoutModifier, type Point as LayoutPoint, type Rect as LayoutRect } from './layout-lens';
+import { buildLayerGeometry, LayerHighlight, LayersPanel } from './layers';
+import { PerformancePanel } from './performance-panel';
 import { Console, logLevel, type Log } from './console';
 import { Sources } from './sources';
 import { Smooth, popoverStroke } from './smooth';
-import { MAX_ZOOM, MIN_ZOOM, useCanvasViewport } from './canvas-viewport';
-import { defaultDevice, nodeName, pickNode, type DeviceProfile, type PreviewWindow, type Snapshot } from './preview';
+import { useCanvasViewport } from './canvas-viewport';
+import { CanvasZoom } from './canvas-zoom';
+import { Hint } from './hint';
+import { defaultDevice, pickNode, type DeviceProfile, type PreviewWindow, type Snapshot } from './preview';
 import { usePreviewReload } from './preview-reload';
 import { ScrollPane } from './scroll-pane';
 import logo from './assets/VerisDevBox.svg';
@@ -254,122 +255,6 @@ function CaptureModeButton({ mode, selected, onSelect, onHover }: {
   </button></Smooth>;
 }
 
-function ZoomPercentInput({ percent, onChange }: { percent: number; onChange: (percent: number) => void }) {
-  const id = useId();
-  function apply(value: number | null) {
-    if (value !== null) onChange(Math.round(value * 10) / 10);
-  }
-  return <div className="debug-zoom-field" onKeyDown={(event) => {
-    if (event.key === 'Enter' && event.target instanceof HTMLInputElement) {
-      event.preventDefault();
-      event.target.blur();
-    }
-  }}>
-    <label className="debug-sr-only" htmlFor={id}>缩放百分比</label>
-    <NumberInput id={id} value={Math.round(percent * 10) / 10} min={MIN_ZOOM} max={MAX_ZOOM} step={1}
-      prefix={<span title="按住并左右拖动调整缩放" className="debug-zoom-scrub-label">缩放</span>}
-      suffix="%" format={{ maximumFractionDigits: 1 }}
-      onValueChange={(value, reason) => { if (reason === 'scrub') apply(value); }}
-      onValueCommitted={apply} onCancel={apply} />
-  </div>;
-}
-
-function Hint({ label, keys, children, hidden }: { label: string; keys?: ReactNode; children: ReactNode; hidden?: boolean }) {
-  const host = useRef<HTMLSpanElement>(null);
-  const tooltip = useRef<HTMLSpanElement>(null);
-  const shadowId = useId();
-  const [open, setOpen] = useState(false);
-  const [anchor, setAnchor] = useState({ top: 0, x: 0 });
-  const [placement, setPlacement] = useState({ center: 0, arrowLeft: 0 });
-  useEffect(() => {
-    if (hidden) setOpen(false);
-  }, [hidden]);
-  function show() {
-    if (hidden) return;
-    const rect = host.current?.getBoundingClientRect();
-    if (!rect) return;
-    setAnchor({ top: rect.bottom + 6, x: rect.left + rect.width / 2 });
-    setOpen(true);
-  }
-  useLayoutEffect(() => {
-    const element = tooltip.current;
-    if (!element) return;
-    function place(width: number) {
-      const inset = 8;
-      const half = width / 2;
-      const center = Math.max(half + inset, Math.min(document.documentElement.clientWidth - half - inset, anchor.x));
-      const limit = Math.max(0, half - 11 - inset);
-      const offset = Math.max(-limit, Math.min(limit, anchor.x - center));
-      setPlacement({ center, arrowLeft: half - 11 + offset });
-    }
-    place(element.getBoundingClientRect().width);
-    const observer = new ResizeObserver(() => place(element.getBoundingClientRect().width));
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [anchor.x, open, hidden]);
-  function hide() {
-    setOpen(false);
-  }
-  useEffect(() => {
-    if (!open) return;
-    window.addEventListener('resize', hide);
-    window.addEventListener('scroll', hide, true);
-    return () => {
-      window.removeEventListener('resize', hide);
-      window.removeEventListener('scroll', hide, true);
-    };
-  }, [open]);
-  const shapeId = shadowId + '-shape';
-  const shape = { clipPath: `url("#${shapeId}")` };
-  return <span className="debug-tooltip-host" ref={host}
-    onMouseEnter={show} onMouseLeave={hide} onFocusCapture={show} onBlurCapture={hide}>
-    {children}
-    {open && !hidden && createPortal(
-      <span ref={tooltip} className="debug-tooltip" style={{ top: anchor.top, left: placement.center }} role="tooltip">
-        <svg className="debug-tooltip-filter" width="100%" height="100%" aria-hidden="true">
-          <defs>
-            <clipPath id={shapeId}>
-              <rect y={7.75} width="100%" height={28.25} rx={8} />
-              <path transform={`translate(${placement.arrowLeft} 0)`}
-                d="M0 8c3 0 6-5 9-7.35a3.1 3.1 0 0 1 4 0C16 3 19 8 22 8v.25H0Z" />
-            </clipPath>
-            <filter id={shadowId} colorInterpolationFilters="sRGB">
-              {/* Both parts of the silhouette share the same 25% white fill. */}
-              <feComponentTransfer in="SourceAlpha" result="silhouette">
-                <feFuncA type="linear" slope={4} />
-              </feComponentTransfer>
-              {([{ dy: -1, blur: 1, opacity: .1 }, { dy: 1, blur: 1, opacity: .3 }, { dy: 1, blur: 3, opacity: .1 }]).map(
-                ({ dy, blur, opacity }, index) => <Fragment key={index}>
-                  <feOffset in="silhouette" dy={dy} result="offset" />
-                  <feGaussianBlur in="offset" stdDeviation={blur / 2} result="blurred" />
-                  <feComposite in="silhouette" in2="blurred" operator="out" result="edge" />
-                  <feFlood floodColor="white" floodOpacity={opacity} result="highlight" />
-                  <feComposite in="highlight" in2="edge" operator="in" result={`shadow${index}`} />
-                </Fragment>,
-              )}
-              <feMerge>
-                <feMergeNode in="SourceGraphic" />
-                <feMergeNode in="shadow2" />
-                <feMergeNode in="shadow1" />
-                <feMergeNode in="shadow0" />
-              </feMerge>
-            </filter>
-          </defs>
-        </svg>
-        <span className="debug-tooltip-glass" aria-hidden="true" style={shape} />
-        <span className="debug-tooltip-surface" aria-hidden="true" style={{ filter: `url("#${shadowId}")` }}>
-          <span className="debug-tooltip-fill" style={shape} />
-        </span>
-        <Smooth radius={8}><span className="debug-tooltip-body" data-shortcut={!!keys}>
-          <span className="debug-tooltip-label">{label}</span>
-          {keys && <span className="debug-tooltip-keys">{keys}</span>}
-        </span></Smooth>
-      </span>,
-      document.body,
-    )}
-  </span>;
-}
-
 function Ruler({ axis, size, cursor }: { axis: 'x' | 'y'; size: number; cursor?: number }) {
   const ticks = Array.from({ length: Math.floor(size / RULER_STEP) + 1 }, (_, index) => index * RULER_STEP);
   const place = (value: number) => axis === 'x' ? { left: value / size * 100 + '%' } : { top: value / size * 100 + '%' };
@@ -399,7 +284,7 @@ export function Component() {
   const sceneFor = (id: string) => project?.scenes.find((item) => item.id === (scenes[id] ?? initialScene)) ?? project?.scenes[0];
   const [hasPreview, setHasPreview] = useState(false);
   const [sourceRevision, setSourceRevision] = useState(0);
-  const [deviceSnapshots, setDeviceSnapshots] = useState<Record<string, { url: string; snapshot: Snapshot }>>({});
+  const [deviceSnapshots, setDeviceSnapshots] = useState<Record<string, { url: string; snapshot: Snapshot; layersInspected: boolean }>>({});
   const [deviceCrops, setDeviceCrops] = useState<Record<string, { url: string; height: number }>>({});
   const [automaticBuild, setAutomaticBuild] = useState<number | null>(null);
   const [status, setStatus] = useState<Status>('ready');
@@ -412,6 +297,7 @@ export function Component() {
   const [scenesOpen, setScenesOpen] = useState(false);
   const [ruler, setRuler] = useState(false);
   const [selectedId, select] = useState<number>();
+  const [layerSelection, setLayerSelection] = useState<{ url: string; id: number }>();
   const [canvasSelection, setCanvasSelection] = useState<number>();
   const [hoverId, hover] = useState<number>();
   const [measure, setMeasure] = useState<{ x: number; y: number }>();
@@ -435,7 +321,6 @@ export function Component() {
   const [captureRate, setCaptureRate] = useState(60);
   const [captureCursor, setCaptureCursor] = useState(true);
   const [captureSettings, setCaptureSettings] = useState(false);
-  const [zoomOpen, setZoomOpen] = useState(false);
   const [controlsOpen, setControlsOpen] = useState(false);
   const [sessionSettings, setSessionSettings] = useState<SessionSettings>();
   const [settingsUpdating, setSettingsUpdating] = useState(false);
@@ -533,6 +418,9 @@ export function Component() {
       enabled: hotReload };
   }
   const previewUrl = slot?.active.url ?? '';
+  const activeFrame = frames.current.get(device.id);
+  const performanceSource = activeFrame && activeFrame.getAttribute('src') === previewUrl
+    ? (activeFrame.contentWindow as PreviewWindow | null)?.aerisDebugger?.performance : undefined;
   const savedSnapshot = deviceSnapshots[device.id];
   const snapshot = savedSnapshot?.url === previewUrl ? savedSnapshot.snapshot
     : { ...EMPTY_SNAPSHOT, height: previewHeight(device, previewUrl) };
@@ -543,7 +431,8 @@ export function Component() {
   useLayoutEffect(() => {
     preview.current = frames.current.get(device.id) ?? null;
   }, [device.id, previewUrl, hasPreview, project]);
-  const { viewport, scale, space, dragging, reset, fit, zoomIn, zoomOut, setPercent } = useCanvasViewport(stage, preview, frameReady, previewUrl);
+  const { viewport, scale, space, dragging, reset, fit, zoomIn, zoomOut, setPercent } =
+    useCanvasViewport(stage, { preview, frameReady, previewUrl });
   const altHeld = useLayoutModifier(frames, frameReady);
   const layoutMode = altHeld && hasPreview && !!project && !areaMode && !space && !dragging && !resizing;
   const [layoutArea, setLayoutArea] = useState<LayoutRect>();
@@ -573,23 +462,15 @@ export function Component() {
     const y = point.y + snapshot.height / 2;
     setMeasure(x >= 0 && x <= width && y >= 0 && y <= snapshot.height ? { x, y } : undefined);
   }
-  const zoomLabel = `${viewport.percent.toFixed(1)}%`;
-  const previousZoom = useRef(viewport.percent);
-  const [zoomExpanded, setZoomExpanded] = useState(false);
-  useEffect(() => {
-    const changed = viewport.percent !== previousZoom.current;
-    previousZoom.current = viewport.percent;
-    if (zoomOpen || !viewport.showZoomFeedback) {
-      setZoomExpanded(false);
-      return;
-    }
-    if (!changed) return;
-    setZoomExpanded(true);
-    const timer = window.setTimeout(() => setZoomExpanded(false), 1500);
-    return () => window.clearTimeout(timer);
-  }, [viewport.percent, viewport.showZoomFeedback, zoomOpen]);
   const renderer = () => (preview.current?.contentWindow as PreviewWindow | null)?.aerisDebugger;
   const selected = snapshot.nodes.find((node) => node.id === selectedId) ?? snapshot.nodes[0];
+  const inspectLayers = view === '图层' && inspectorOpen;
+  const layersInspected = savedSnapshot?.url === previewUrl && savedSnapshot.layersInspected;
+  const layerNodes = layersInspected ? snapshot.layerNodes ?? snapshot.nodes : EMPTY_SNAPSHOT.nodes;
+  const layerGeometry = useMemo(() => inspectLayers ? buildLayerGeometry(layerNodes, device, snapshot.height) : undefined,
+    [inspectLayers, layerNodes, device, snapshot.height]);
+  const selectedLayer = layerSelection?.url === previewUrl
+    ? layerGeometry?.layers.find(({ node }) => node.id === layerSelection.id) : undefined;
   const inspected = inspectorOpen && view === '元素' && !areaMode && !layoutMode
     ? snapshot.nodes.find((node) => node.id === hoverId && !node.hidden) : undefined;
   const highlighted = inspected ?? (ruler ? selected : undefined);
@@ -634,16 +515,34 @@ export function Component() {
 
   useEffect(() => {
     select(undefined);
+    setLayerSelection(undefined);
     setCanvasSelection(undefined);
     hover(undefined);
+  }, [previewUrl]);
+
+  useEffect(() => {
+    if (layersInspected && layerGeometry && layerSelection && !selectedLayer) setLayerSelection(undefined);
+  }, [layersInspected, layerGeometry, layerSelection, selectedLayer]);
+
+  useEffect(() => {
+    let lastSubmissions: number | undefined;
+    let inspectedAt = -Infinity;
     function inspect() {
-      const next = renderer()?.snapshot();
-      if (next) setDeviceSnapshots((previous) => ({ ...previous, [device.id]: { url: previewUrl, snapshot: next } }));
+      if (!previewUrl || preview.current?.getAttribute('src') !== previewUrl) return;
+      const source = renderer();
+      const time = performance.now();
+      const submissions = inspectLayers ? source?.performance?.read()?.submissions : undefined;
+      if (inspectLayers && submissions === lastSubmissions && time - inspectedAt < 250) return;
+      const next = source?.snapshot(inspectLayers ? { layers: true } : undefined);
+      lastSubmissions = submissions;
+      inspectedAt = time;
+      if (next) setDeviceSnapshots((previous) => ({ ...previous,
+        [device.id]: { url: previewUrl, snapshot: next, layersInspected: inspectLayers } }));
     }
     inspect();
-    const timer = window.setInterval(inspect, 250);
+    const timer = window.setInterval(inspect, inspectLayers ? 70 : 250);
     return () => window.clearInterval(timer);
-  }, [previewUrl]);
+  }, [device.id, previewUrl, inspectLayers]);
 
   useEffect(() => {
     function onMessage(event: MessageEvent) {
@@ -656,6 +555,14 @@ export function Component() {
         append({ level: logLevel(data.level, data.text), source: '运行', text: data.text, device });
       } else if (data?.type === 'aeris-debug-error') {
         append({ level: 'error', source: '运行', text: '无法加载组件预览。', device });
+        const url = frame.getAttribute('src');
+        setLayerSelection((previous) => previous?.url === url ? undefined : previous);
+        setDeviceSnapshots((previous) => {
+          if (previous[device]?.url !== url) return previous;
+          const next = { ...previous };
+          delete next[device];
+          return next;
+        });
       } else if (data?.type === 'aeris-preview-size' && Number.isInteger(data.height) && data.height > 0) {
         const url = frame.getAttribute('src');
         if (url) setDeviceCrops((previous) => ({ ...previous, [device]: { url, height: data.height } }));
@@ -1315,7 +1222,7 @@ export function Component() {
 
   return <main className="debug-workspace" data-inspector={inspectorOpen} data-placement={placement} data-resizing={resizing}
     style={{ '--debug-inspector-width': (inspectorOpen ? inspectorWidth : 0) + 'px' } as CSSProperties}>
-    <Smooth radius={8} stroke={{ width: 1, color: "#ffffff", opacity: 0.14 }}><section className="debug-preview-panel" aria-label="手表预览">
+    <Smooth radius={8} stroke={{ width: 1, color: "#ffffff", opacity: 0.14 }}><section className="debug-preview-panel" data-zoom-scope="" aria-label="手表预览">
       <header className="debug-toolbar">
         <div className="debug-logo"><img src={logo} alt="Aeris DevBox" /></div>
         {project && project.scenes.length === 0 ? <span className="debug-app-title">{project.title}</span> :
@@ -1337,38 +1244,14 @@ export function Component() {
           <Hint label="标尺" keys={shortcut('R')}>
             <Smooth radius={6}><Button isIconOnly variant="ghost" className="debug-icon" aria-label="显示标尺" aria-pressed={ruler} onPress={() => setRuler(!ruler)}><RulerIcon size={18} aria-hidden="true" /></Button></Smooth>
           </Hint>
-          <Hint label="缩放" hidden={zoomOpen || zoomExpanded}>
-            <Popover isOpen={zoomOpen} onOpenChange={setZoomOpen}>
-              <Smooth radius={6}><Button variant="ghost" className="debug-icon debug-zoom-trigger" aria-label="缩放"
-                data-expanded={zoomExpanded} style={{ '--debug-zoom-digits': zoomLabel.length - 2 } as CSSProperties}>
-                <MagnifyingGlassPlusIcon size={18} aria-hidden="true" />
-                <span className="debug-zoom-trigger-value" aria-hidden="true"><Scritto value={zoomLabel} /></span>
+          <CanvasZoom viewport={viewport} fit={fitDevices} reset={reset} zoomIn={zoomIn} zoomOut={zoomOut} setPercent={setPercent}>
+            <div className="debug-zoom-actions">
+              <Smooth radius={8}><Button variant="ghost" className="debug-menu-item" aria-pressed={ruler}
+                onPress={() => setRuler(!ruler)}>
+                <span>标尺</span><span className="debug-zoom-shortcut" aria-hidden="true">{apple ? '⌘' : 'Ctrl '}R</span>
               </Button></Smooth>
-              <Popover.Content className="debug-popover-wrap"><Smooth radius={20} stroke={popoverStroke}><Popover.Dialog aria-label="缩放" className="debug-popover debug-zoom-menu">
-                <ZoomPercentInput percent={viewport.percent} onChange={setPercent} />
-                <div className="debug-zoom-actions">
-                  {[
-                    { label: '放大', key: '+', action: zoomIn },
-                    { label: '缩小', key: '−', action: zoomOut },
-                    { label: '适应画布', action: fitDevices },
-                    { label: '缩放至 50%', action: () => setPercent(50) },
-                    { label: '缩放至 100%', key: '0', action: reset },
-                    { label: '缩放至 200%', action: () => setPercent(200) },
-                  ].map(({ label, key, action }) => <Smooth key={label} radius={8}>
-                    <Button variant="ghost" className="debug-menu-item" onPress={() => { action(); setZoomOpen(false); }}>
-                      <span>{label}</span>{key && <span className="debug-zoom-shortcut" aria-hidden="true">{apple ? '⌘' : 'Ctrl '}{key}</span>}
-                    </Button>
-                  </Smooth>)}
-                </div>
-                <div className="debug-zoom-actions">
-                  <Smooth radius={8}><Button variant="ghost" className="debug-menu-item" aria-pressed={ruler}
-                    onPress={() => setRuler(!ruler)}>
-                    <span>标尺</span><span className="debug-zoom-shortcut" aria-hidden="true">{apple ? '⌘' : 'Ctrl '}R</span>
-                  </Button></Smooth>
-                </div>
-              </Popover.Dialog></Smooth></Popover.Content>
-            </Popover>
-          </Hint>
+            </div>
+          </CanvasZoom>
           <Hint label="检查面板" keys={shortcut('I')}>
             <Smooth radius={6}><Button isIconOnly variant="ghost" className="debug-icon" aria-label="显示检查面板"
               aria-pressed={inspectorOpen} onPress={() => { setInspectorOpen(!inspectorOpen); setPicking(false); hover(undefined); }}><CodeBlockIcon size={18} aria-hidden="true" /></Button></Smooth>
@@ -1591,7 +1474,9 @@ export function Component() {
             {selectedArea && <LayoutLens key={url} profile={profile} height={height} scale={scale} area={selectedArea}
               frame={frames.current.get(profile.id)}
               activeSnapshot={active ? snapshot : undefined} />}
-            {active && !layoutMode && highlighted && !highlighted.hidden && <BoxHighlight node={highlighted} width={width} height={snapshot.height} />}
+            {active && !layoutMode && !areaMode && layerGeometry && selectedLayer
+              ? <LayerHighlight geometry={layerGeometry} layer={selectedLayer} />
+              : active && !layoutMode && highlighted && !highlighted.hidden && <BoxHighlight node={highlighted} width={width} height={snapshot.height} />}
             {active && !layoutMode && picking && <div className="debug-pick-surface" onPointerMove={(event) => hover(findAt(event)?.id)}
               onPointerLeave={() => {
                 hover(undefined);
@@ -1736,18 +1621,10 @@ export function Component() {
         viewport={{ role: 'region', 'aria-label': '资源内容' }}><h2>当前画面</h2><dl className="debug-properties">
         <div><dt>图片对象</dt><dd>{snapshot.nodes.filter((node) => node.kind === 2 && !node.hidden).length}</dd></div>
       </dl></ScrollPane>}
-      {view === '性能' && <ScrollPane className="debug-panel" contentClassName="debug-panel-content"
-        viewport={{ role: 'region', 'aria-label': '性能内容' }}><h2>浏览器预览</h2><dl className="debug-properties">
-        <div><dt>对象数</dt><dd>{snapshot.nodes.length}</dd></div>
-        <div><dt>最近绘制间隔</dt><dd>{snapshot.frameTime ? snapshot.frameTime.toFixed(1) + ' ms' : '—'}</dd></div>
-        <div><dt>WASM 内存</dt><dd>{snapshot.memoryBytes ? (snapshot.memoryBytes / 1048576).toFixed(1) + ' MiB' : '—'}</dd></div>
-      </dl></ScrollPane>}
-      {view === '图层' && <ScrollPane className="debug-panel" contentClassName="debug-panel-content"
-        viewport={{ role: 'region', 'aria-label': '图层内容' }}>
-        {snapshot.nodes.filter((node) => !node.hidden).reverse().map((node) =>
-          <Button key={node.id} variant="ghost" className="debug-layer" onHoverStart={() => hover(node.id)} onHoverEnd={() => hover(undefined)}
-            onPress={() => { select(node.id); setView('元素'); }}>{nodeName(node)} <span>{node.width} × {node.height}</span></Button>)}
-      </ScrollPane>}
+      <PerformancePanel source={performanceSource} target={previewUrl}
+        name={scene ? `${device.name} · ${scene.title}` : device.name} hidden={view !== '性能' || !inspectorOpen} />
+      {layerGeometry && <LayersPanel key={previewUrl} geometry={layerGeometry} selected={selectedLayer}
+        onSelect={(id) => setLayerSelection({ url: previewUrl, id })} />}
     </aside></Smooth>
     {inspectorOpen && placement !== 'bottom' && <div className="debug-resizer" data-placement={placement} role="separator"
       aria-orientation="vertical" aria-label="调整检查器宽度" onPointerDown={resize} />}

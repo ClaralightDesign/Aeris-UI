@@ -3,6 +3,7 @@
 #include "lvgl.h"
 #include "src/core/lv_obj_class_private.h"
 #include "src/core/lv_obj_scroll_private.h"
+#include "src/draw/lv_draw_image_private.h"
 #include "src/misc/cache/instance/lv_image_cache.h"
 #include <emscripten.h>
 #include <stdlib.h>
@@ -46,6 +47,17 @@ extern int aeris_devbox_mount(void);
 
 EM_JS(void, canvas_paint, (uint8_t *pixels, int width, int height), {
     Module.galleryPaint(HEAPU8, pixels, width, height);
+});
+
+EM_JS(bool, setup_debug_measurements, (void), {
+    if (!Module.galleryDebugEnabled) return false;
+    Module.galleryWasmCapacity = () => HEAPU8.byteLength;
+    return true;
+});
+
+EM_JS(void, render_event, (bool started), {
+    if (started) Module.galleryRenderStart();
+    else Module.galleryRenderReady();
 });
 
 EM_JS(uint32_t, browser_ticks, (void), {
@@ -804,6 +816,40 @@ void gallery_add_utility_classes(lv_obj_t *obj, const char *source, size_t len, 
     add_utility_classes((uintptr_t)obj, source, len);
 }
 
+EM_JS(bool, register_layer_metadata, (uintptr_t id, bool circle, uint32_t blur_radius), {
+    if (!Module.galleryDebugEnabled) return false;
+    const metadata = Module.galleryLayerMetadata || (Module.galleryLayerMetadata = new Map());
+    let entry = metadata.get(id);
+    const first = !entry;
+    if (first) {
+        if (!circle && !blur_radius) return false;
+        metadata.set(id, entry = {});
+    }
+    if (circle) entry.circle = true;
+    else entry.blurRadius = blur_radius >>> 0;
+    return first;
+});
+
+EM_JS(void, forget_layer_metadata, (uintptr_t id), { Module.galleryLayerMetadata.delete(id); });
+
+static void layer_metadata_deleted(lv_event_t *event) {
+    forget_layer_metadata((uintptr_t)lv_event_get_current_target(event));
+}
+
+static void set_layer_metadata(lv_obj_t *obj, bool circle, uint32_t radius) {
+    if (obj && register_layer_metadata((uintptr_t)obj, circle, radius)) {
+        lv_obj_add_event_cb(obj, layer_metadata_deleted, LV_EVENT_DELETE, NULL);
+    }
+}
+
+void gallery_inspect_circle(lv_obj_t *obj) {
+    set_layer_metadata(obj, true, 0);
+}
+
+EMSCRIPTEN_KEEPALIVE void gallery_inspect_backdrop_blur(lv_obj_t *obj, uint32_t radius) {
+    set_layer_metadata(obj, false, radius);
+}
+
 EM_JS(void, inspect_node,
       (uintptr_t id, uintptr_t parent, int kind, const char *class_name, const char *component, const char *value, size_t length,
        int x, int y, int width, int height,
@@ -814,6 +860,7 @@ EM_JS(void, inspect_node,
        int radius, int border, int border_top, int border_right, int border_bottom, int border_left,
        int font_height, double text_scale, int alignment, unsigned checked, unsigned disabled), {
     const textStyle = kind === 1 ? Module.galleryTextStyles?.get(id) : undefined;
+    if (Module.galleryLayerMetadata?.has(id)) events--;
     Module.galleryNodes.push({
         id, parent, kind, className: class_name ? UTF8ToString(class_name) : "",
         component: component ? UTF8ToString(component) : "",
@@ -833,6 +880,64 @@ EM_JS(void, inspect_node,
         checked: !!checked, disabled: !!disabled,
     });
 });
+
+EM_JS(uint32_t, inspect_layer_geometry,
+      (uintptr_t id, int clip_radius, double a, double b, double c, double d, double e, double f), {
+    const node = Module.galleryNodes[Module.galleryNodes.length - 1];
+    const metadata = Module.galleryLayerMetadata?.get(id);
+    node.layerGeometry = {
+        clipRadius: clip_radius,
+        ...(metadata?.circle && { outline: "circle" }),
+        ...(a !== 1 || b || c || d !== 1 || e || f ? { transform: [a, b, c, d, e, f] } : {}),
+    };
+    return metadata?.blurRadius || 0;
+});
+
+EM_JS(void, inspect_backdrop,
+      (int x, int y, int width, int height, int opacity, uint32_t radius), {
+    const node = Module.galleryNodes[Module.galleryNodes.length - 1];
+    node.layerGeometry.backdrop = {
+        x, y, width, height, opacity: opacity / 255, radius: radius >>> 0,
+    };
+});
+
+static void inspect_geometry(lv_obj_t *obj, const lv_area_t *area, int kind) {
+    int32_t width = LV_MAX(1, lv_area_get_width(area));
+    int32_t height = LV_MAX(1, lv_area_get_height(area));
+    lv_point_t corners[] = {
+        {area->x1, area->y1},
+        {area->x1 + width, area->y1},
+        {area->x1, area->y1 + height},
+    };
+    lv_obj_transform_point_array(obj, corners, 3, LV_OBJ_POINT_TRANSFORM_FLAG_RECURSIVE);
+    double a = (corners[1].x - corners[0].x) / (double)width;
+    double b = (corners[1].y - corners[0].y) / (double)width;
+    double c = (corners[2].x - corners[0].x) / (double)height;
+    double d = (corners[2].y - corners[0].y) / (double)height;
+    int radius = lv_obj_get_style_clip_corner(obj, LV_PART_MAIN) ? lv_obj_get_style_radius(obj, LV_PART_MAIN) : 0;
+    uint32_t blur_radius = inspect_layer_geometry((uintptr_t)obj, radius, a, b, c, d,
+                                corners[0].x - a * area->x1 - c * area->y1,
+                                corners[0].y - b * area->x1 - d * area->y1);
+    if (kind != 2 || !blur_bitmap || lv_image_get_src(obj) != &blur_image) {
+        if (blur_radius) {
+            inspect_backdrop(area->x1, area->y1, lv_area_get_width(area), lv_area_get_height(area), LV_OPA_COVER, blur_radius);
+        }
+        return;
+    }
+    lv_point_t pivot;
+    lv_image_get_pivot(obj, &pivot);
+    int32_t source_width = blur_image.header.w;
+    int32_t source_height = blur_image.header.h;
+    lv_area_t source = {0, 0, source_width - 1, source_height - 1};
+    lv_area_align(area, &source, (lv_align_t)lv_image_get_inner_align(obj),
+                  lv_image_get_offset_x(obj), lv_image_get_offset_y(obj));
+    lv_area_t drawn;
+    lv_image_buf_get_transformed_area(&drawn, source_width, source_height, lv_image_get_rotation(obj),
+                                      lv_image_get_scale_x(obj), lv_image_get_scale_y(obj), &pivot);
+    lv_area_move(&drawn, source.x1, source.y1);
+    inspect_backdrop(drawn.x1, drawn.y1, lv_area_get_width(&drawn), lv_area_get_height(&drawn),
+                     lv_obj_get_style_image_opa(obj, LV_PART_MAIN), blur_radius ? blur_radius : BLUR_RADIUS * BLUR_SCALE);
+}
 
 static bool is_nine_patch_slice(lv_obj_t *obj) {
     const char *name = lv_obj_get_name(obj);
@@ -879,7 +984,7 @@ EM_JS(void, inspect_reload_state, (uintptr_t id, int x, int y, bool scroll, bool
     if (moving) node.moving = true;
 });
 
-static void inspect_tree(lv_obj_t *obj, lv_obj_t *parent, bool hidden, const char *root_class, bool reload) {
+static void inspect_tree(lv_obj_t *obj, lv_obj_t *parent, bool hidden, const char *root_class, bool reload, bool geometry) {
     lv_area_t area, content;
     lv_obj_get_coords(obj, &area);
     lv_obj_get_content_coords(obj, &content);
@@ -919,6 +1024,7 @@ static void inspect_tree(lv_obj_t *obj, lv_obj_t *parent, bool hidden, const cha
                  border_sides & LV_BORDER_SIDE_BOTTOM ? border : 0, border_sides & LV_BORDER_SIDE_LEFT ? border : 0,
                  font ? font->line_height : 0, text_scale, lv_obj_get_style_text_align(obj, LV_PART_MAIN),
                  lv_obj_has_state(obj, LV_STATE_CHECKED), lv_obj_has_state(obj, LV_STATE_DISABLED));
+    if (geometry && !hidden) inspect_geometry(obj, &area, kind);
     if (reload) {
         bool scrollable = kind != 1 && lv_obj_has_flag(obj, LV_OBJ_FLAG_SCROLLABLE);
         int x = scrollable ? lv_obj_get_scroll_x(obj) : 0;
@@ -937,15 +1043,30 @@ static void inspect_tree(lv_obj_t *obj, lv_obj_t *parent, bool hidden, const cha
     }
     for (uint32_t index = 0; index < count; index++) {
         lv_obj_t *child = lv_obj_get_child(obj, index);
-        if (!is_nine_patch_slice(child)) inspect_tree(child, obj, hidden, NULL, reload);
+        if (!is_nine_patch_slice(child)) inspect_tree(child, obj, hidden, NULL, reload, geometry);
     }
 }
 
-EMSCRIPTEN_KEEPALIVE void gallery_inspect(void) {
+EMSCRIPTEN_KEEPALIVE void gallery_inspect(bool geometry) {
     lv_obj_t *root = lv_screen_active();
     if (root) {
         lv_obj_update_layout(root);
-        inspect_tree(root, NULL, false, "lv_screen", false);
+        inspect_tree(root, NULL, false, "lv_screen", false, geometry);
+    }
+}
+
+EMSCRIPTEN_KEEPALIVE void gallery_inspect_overlay(bool bottom) {
+    lv_display_t *display = lv_display_get_default();
+    if (!display) return;
+    lv_obj_t *roots[] = {
+        lv_display_get_layer_bottom(display), lv_display_get_layer_top(display), lv_display_get_layer_sys(display),
+    };
+    const char *classes[] = { "lv_layer_bottom", "lv_layer_top", "lv_layer_sys" };
+    for (size_t i = bottom ? 0 : 1; i < (bottom ? 1 : 3); i++) {
+        lv_obj_t *root = roots[i];
+        if (!lv_obj_get_child_count(root) && !lv_obj_get_style_bg_opa(root, LV_PART_MAIN)) continue;
+        lv_obj_update_layout(root);
+        inspect_tree(root, NULL, false, classes[i], false, true);
     }
 }
 
@@ -959,8 +1080,12 @@ EMSCRIPTEN_KEEPALIVE void gallery_reload_inspect(void) {
     const char *classes[] = { "lv_screen", "lv_layer_bottom", "lv_layer_top", "lv_layer_sys" };
     for (size_t i = 0; i < sizeof(roots) / sizeof(roots[0]); i++) {
         lv_obj_update_layout(roots[i]);
-        inspect_tree(roots[i], NULL, false, classes[i], true);
+        inspect_tree(roots[i], NULL, false, classes[i], true, false);
     }
+}
+
+static void display_render_event(lv_event_t *event) {
+    render_event(lv_event_get_code(event) == LV_EVENT_RENDER_START);
 }
 
 static void flush_display(lv_display_t *display, const lv_area_t *area, uint8_t *pixels) {
@@ -996,6 +1121,10 @@ int main(void) {
     lv_display_set_color_format(display, LV_COLOR_FORMAT_ARGB8888);
     lv_display_set_buffers(display, framebuffer, NULL, buffer_size, LV_DISPLAY_RENDER_MODE_FULL);
     lv_display_set_flush_cb(display, flush_display);
+    if (setup_debug_measurements()) {
+        lv_display_add_event_cb(display, display_render_event, LV_EVENT_RENDER_START, NULL);
+        lv_display_add_event_cb(display, display_render_event, LV_EVENT_RENDER_READY, NULL);
+    }
 
     pointer = lv_indev_create();
     lv_indev_set_type(pointer, LV_INDEV_TYPE_POINTER);

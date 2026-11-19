@@ -188,6 +188,17 @@ pub(super) unsafe fn inspect_name(_object: Obj, _name: &'static core::ffi::CStr)
 }
 
 #[inline]
+pub(super) fn inspect_circle(_object: Obj) {
+    #[cfg(target_os = "emscripten")]
+    if !_object.is_null() {
+        unsafe extern "C" {
+            fn gallery_inspect_circle(object: Obj);
+        }
+        unsafe { gallery_inspect_circle(_object) };
+    }
+}
+
+#[inline]
 pub(super) fn reload_label(_object: Obj, _label: &[u8]) {
     #[cfg(target_os = "emscripten")]
     if !_object.is_null() {
@@ -527,6 +538,17 @@ pub unsafe fn round_button(
             }
         }
         inspect_name(root, c"AerisUI.RoundButton");
+        if [
+            assets::BUTTON_BLACK,
+            assets::BUTTON_ABOUT,
+            assets::BUTTON_PRIMARY,
+            round_button::STANDARD_FLAT_NEUTRAL,
+            round_button::STANDARD_FLAT_ACCENT,
+        ]
+        .contains(&background)
+        {
+            inspect_circle(root);
+        }
         anim::attach(root, size / 2, size / 2, anim::Feedback::Scale);
     }
     button

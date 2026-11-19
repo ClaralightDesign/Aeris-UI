@@ -18,6 +18,7 @@ unsafe extern "C" {
     pub fn gallery_screen() -> Obj;
     pub fn devbox_device_id(value: *mut u8, capacity: usize) -> usize;
     pub fn gallery_capture_backdrop(root: Obj) -> *const c_void;
+    pub(crate) fn gallery_inspect_backdrop_blur(object: Obj, radius_px: u32);
     pub fn gallery_set_crop_height(height: i32);
     pub fn gallery_sync_refresh_to_frame();
     pub(crate) fn devbox_scene_id(value: *mut u8, capacity: usize) -> usize;

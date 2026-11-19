@@ -51,6 +51,10 @@
     let lastPaint;
     let frameTime = 0;
     let memoryBytes = 0;
+    let submissions = 0;
+    let renderStart;
+    let lastRender = null;
+    const performanceListeners = new Set();
     let reload;
     let runtimeFailed = false;
     const debug = params.has("debug") && window.parent !== window;
@@ -92,6 +96,7 @@
     var Module = {
       noInitialRun: true,
       galleryDevice: device,
+      galleryDebugEnabled: debug,
       galleryReloadEnabled: reloadable,
       galleryStorageAccess: {
         getItem: (key) => localStorage.getItem(storage + key),
@@ -122,8 +127,22 @@
           if (lastPaint !== undefined) frameTime = now - lastPaint;
           lastPaint = now;
           memoryBytes = memory.byteLength;
+          submissions++;
         }
         if (!canvas.dataset.ready) canvas.dataset.ready = "true";
+      },
+      galleryRenderStart() {
+        renderStart = { time: performance.now(), submissions };
+      },
+      galleryRenderReady() {
+        if (!renderStart || runtimeFailed) return;
+        const now = performance.now();
+        const count = submissions - renderStart.submissions;
+        const durationMs = now - renderStart.time;
+        renderStart = undefined;
+        if (!count) return;
+        lastRender = { at: performance.timeOrigin + now, durationMs, submissions: count };
+        for (const listener of performanceListeners) listener(lastRender);
       },
       galleryLog(level, text) {
         notify("aeris-debug-log", { level, text: String(text) });
@@ -131,7 +150,10 @@
       print(text) { console.log(text); Module.galleryLog("log", text); },
       printErr(text) { console.error(text); Module.galleryLog("error", text); },
       galleryError() {
+        if (runtimeFailed) return;
         runtimeFailed = true;
+        for (const listener of performanceListeners) listener(null);
+        performanceListeners.clear();
         notify("aeris-debug-error");
         viewport.hidden = true;
         document.getElementById("error").hidden = false;
@@ -177,17 +199,40 @@
         });
         if (debug) {
           window.aerisDebugger = {
-            snapshot() {
-              if (!canvas.dataset.ready) return null;
+            snapshot(options) {
+              if (!ready()) return null;
+              const geometry = !!options?.layers;
               Module.galleryNodes = [];
-              Module._gallery_inspect();
+              Module._gallery_inspect(geometry);
+              const nodes = Module.galleryNodes;
+              let layerNodes;
+              if (geometry) {
+                Module.galleryNodes = [];
+                Module._gallery_inspect_overlay(true);
+                Module.galleryNodes = Module.galleryNodes.concat(nodes);
+                Module._gallery_inspect_overlay(false);
+                layerNodes = Module.galleryNodes;
+              }
               return {
-                nodes: Module.galleryNodes,
+                nodes,
+                ...(layerNodes && { layerNodes }),
                 width: canvas.width,
                 height: cropHeight,
                 frameTime,
                 memoryBytes,
               };
+            },
+            performance: {
+              read() {
+                return ready() && lastRender
+                  ? { lastRender, submissions, memoryBytes: Module.galleryWasmCapacity() }
+                  : null;
+              },
+              subscribe(listener) {
+                if (runtimeFailed) listener(null);
+                else performanceListeners.add(listener);
+                return () => performanceListeners.delete(listener);
+              },
             },
             screenshot() {
               if (!canvas.dataset.ready) return null;

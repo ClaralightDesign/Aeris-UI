@@ -7,6 +7,15 @@ pub mod bindings;
 
 pub use bindings::{LvxEventCallback, LvxTimerCallback, Obj};
 
+/// 向图层检查器报告自定义 LVGL 对象的背景模糊半径，单位为设备像素。
+/// 传入 0 清除标记。组件仍负责在设备预览中绘制自己的模糊。
+///
+/// # 安全要求
+/// 必须从 DevBox 的 LVGL 主线程调用，且对象必须仍然有效。
+pub unsafe fn set_backdrop_blur(object: Obj, radius_px: u32) {
+    unsafe { bindings::gallery_inspect_backdrop_blur(object, radius_px) };
+}
+
 /// 将应用的正常启动函数注册给 DevBox。函数接收 LVGL 根对象，成功时返回 true。
 #[macro_export]
 macro_rules! devbox_app {

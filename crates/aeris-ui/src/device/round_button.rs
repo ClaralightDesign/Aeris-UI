@@ -129,6 +129,9 @@ pub unsafe fn create(
         let root = font::clip(parent, bounds.w, bounds.h, 0)?;
         lvx_object_align(root, 1, bounds.x, bounds.y);
         lv::inspect_name(root, name);
+        if options.position == Center {
+            lv::inspect_circle(root);
+        }
         if options.position == Center && options.theme == Glass && options.status == Neutral {
             lv::style(root, lv::RADIUS, (bounds.w / 2) as u32);
             lv::style(root, lv::BG_COLOR, Color::Background.resolve());
