@@ -2,6 +2,8 @@
 
 Aeris UI 是面向 Canopus 的 Rust 组件库。默认构建提供布局、字形和动效模型。启用 `band-10-pro` 可使用小米手环 10 Pro 固件 `3.101.043` 的 LVGL 组件。`gallery` 启用 Gallery 配色和 Linoval Sans 标签。依赖声明和初始化见[接入说明](../../README.md#接入)。
 
+应用的主题配置放在应用根目录，与 `Cargo.toml` 和 `Canopus.toml` 同级。可参考 Gallery 的 [aeris.config.toml](../../examples/gallery/aeris.config.toml) 和 [build.rs](../../examples/gallery/build.rs)。应用构建时校验配置，启动时在创建组件之前调用 `aeris_ui::theme::apply`。调用 `page::button_with_theme` 或设置 `round_button::Options::theme` 可以为单个按钮指定外观。
+
 | 组件 | 设备端入口 | 资源与使用方 |
 | --- | --- | --- |
 | 页面容器、标题栏、分页 | `page`、`header`、`page_indicator` | 标题栏位图与分页指示器，Timer 和 Gallery |

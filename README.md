@@ -20,7 +20,7 @@ canopus-abi = { git = "https://github.com/AstralSightStudios/Canopus.git", rev =
 
 ## DevBox
 
-安装 DevBox 后，在应用目录运行 `cargo aeris-devbox`，支持直接使用 Cargo 拉取的 Git 依赖。项目通过 `devbox.json` 和 Rust 启动入口运行完整应用，再检查当前页面的 UI。[接入与启动](devbox/README.md)
+安装 DevBox 后，在应用目录运行 `cargo aeris-devbox`，支持直接使用 Cargo 拉取的 Git 依赖。项目通过 `aeris.config.toml` 和 Rust 启动入口运行完整应用，再检查当前页面的 UI。[接入与启动](devbox/README.md)
 
 组件展厅位于 [examples/gallery](examples/gallery/README.md)。在本仓库运行 `cargo aeris-devbox --demo`，可并排预览 10 Pro 与手环 11；两种设备运行同一份页面源码。已完成和后续工作见 [待办](TODO.md)。
 

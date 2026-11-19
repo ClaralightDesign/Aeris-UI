@@ -15,6 +15,8 @@ use aeris_ui::device;
 mod app_assets;
 mod confirmation_demo;
 mod gallery;
+
+include!(concat!(env!("OUT_DIR"), "/aeris_theme.rs"));
 mod inputs;
 #[cfg(not(target_os = "emscripten"))]
 mod native_app;
@@ -27,7 +29,7 @@ extern crate self as canopus_target_private;
 #[cfg(target_os = "emscripten")]
 pub use aeris_ui::devbox::bindings::*;
 #[cfg(target_os = "emscripten")]
-aeris_ui::devbox_app!(native_app::start);
+aeris_ui::devbox_app!(native_app::start, before_assets = apply_theme);
 
 #[cfg(not(target_os = "emscripten"))]
 static ACTIVE: AtomicBool = AtomicBool::new(false);
@@ -54,6 +56,7 @@ const fn pack<const N: usize>(value: &[u8]) -> [u8; N] {
 #[unsafe(no_mangle)]
 pub extern "C" fn canopus_mod_prepare(ctx: *const ContextV1) -> i32 {
     unsafe { device::set_context(ctx.cast()) };
+    apply_theme();
     ACTIVE.store(false, Ordering::Release);
     LAST_ERROR.store(0, Ordering::Release);
     0

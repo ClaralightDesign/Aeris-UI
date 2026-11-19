@@ -228,7 +228,7 @@ test('Workbench settings independently grant CLI and MCP access to one Gallery p
 });
 
 test('Agent scopes live preview, input and scenes to the selected device', { timeout: 150_000 }, async (t) => {
-  const config = fileURLToPath(new URL('./component-previews/devbox.json', import.meta.url));
+  const config = fileURLToPath(new URL('./component-previews/aeris.config.toml', import.meta.url));
   const server = spawn(process.execPath, [cli, 'agent', 'serve', config], { stdio: ['ignore', 'pipe', 'inherit'] });
   const exited = once(server, 'exit');
   t.after(async () => {

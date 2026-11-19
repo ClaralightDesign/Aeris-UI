@@ -3,8 +3,8 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
-const usage = `用法：cargo aeris-devbox agent install-browser [devbox.json]
-      cargo aeris-devbox agent serve [devbox.json | --demo]
+const usage = `用法：cargo aeris-devbox agent install-browser [aeris.config.toml]
+      cargo aeris-devbox agent serve [aeris.config.toml | --demo]
       cargo aeris-devbox agent <命令> --session <文件> [--device <ID>]
 
 status

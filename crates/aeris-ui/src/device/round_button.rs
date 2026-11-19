@@ -2,13 +2,19 @@
 
 use canopus_target_private::*;
 
-use crate::{geometry::Rect, theme::Color};
+use crate::{
+    geometry::Rect,
+    theme::{self, Color},
+};
 
 use super::{
     anim, assets, font,
     lv::{self, Obj},
     page::ButtonTheme,
 };
+
+pub(super) const STANDARD_FLAT_NEUTRAL: &[u8] = asset_path!("round-standard-normal-neutral.bin");
+pub(super) const STANDARD_FLAT_ACCENT: &[u8] = asset_path!("round-standard-normal-accent.bin");
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Position {
@@ -102,8 +108,8 @@ pub unsafe fn create(
     let face = match (options.position, options.theme, options.status, wide) {
         (Center, Glass, Neutral, false) => asset_path!("round-standard-glass-neutral.bin"),
         (Center, Glass, Primary, false) => asset_path!("round-standard-glass-accent.bin"),
-        (Center, Normal, Neutral, false) => asset_path!("round-standard-normal-neutral.bin"),
-        (Center, Normal, Primary, false) => asset_path!("round-standard-normal-accent.bin"),
+        (Center, Normal, Neutral, false) => STANDARD_FLAT_NEUTRAL,
+        (Center, Normal, Primary, false) => STANDARD_FLAT_ACCENT,
         (Center, Glass, Neutral, true) => asset_path!("round-wide-glass-neutral.bin"),
         (Center, Glass, Primary, true) => asset_path!("round-wide-glass-accent.bin"),
         (Center, Normal, Neutral, true) => asset_path!("round-wide-normal-neutral.bin"),
@@ -143,7 +149,9 @@ pub unsafe fn create(
         lv::recolor(
             glyph,
             if options.status == Primary {
-                Color::PrimaryText.resolve_or(0xD7E8FF)
+                Color::PrimaryText.resolve_or(
+                    theme::accent_button().map_or(0xD7E8FF, |button| button.foreground),
+                )
             } else {
                 Color::PrimaryText.resolve_or(0xDDDDDD)
             },

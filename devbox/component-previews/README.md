@@ -13,4 +13,4 @@ LVGL_DIR=/path/to/lvgl sh devbox/component-previews/export.sh \
 
 布局示例可通过 `?scene=layout:settings` 打开。点击按钮更新设置页的选中项，向上拖动查看说明。用 `?scene=layout:empty` 检查没有子节点的 Box、Flex 和 Grid。嵌入 DevBox 检查器时加上 `&debug` 即可查看组件名、原始工具类和渲染后的矩形。
 
-从 Aeris UI 根目录运行 `node devbox/cli.mjs devbox/component-previews/devbox.json`，可以在同一个工作台并排查看四种屏幕。独立导出的 HTML 也可以通过 `device` 查询参数选取设备。
+从 Aeris UI 根目录运行 `node devbox/cli.mjs devbox/component-previews/aeris.config.toml`，可以在同一个工作台并排查看四种屏幕。独立导出的 HTML 也可以通过 `device` 查询参数选取设备。

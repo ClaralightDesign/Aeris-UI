@@ -20,7 +20,7 @@ export LVGL_DIR=/path/to/lvgl
 cargo aeris-devbox
 ```
 
-打开终端显示的地址。可用 `cargo aeris-devbox configs/watch.json` 选择其他配置，或设置 `AERIS_DEVBOX_PORT` 选择端口。也可通过 `EMCC`、`EMAR` 指定已安装的 Emscripten 工具。
+打开终端显示的地址。可用 `cargo aeris-devbox configs/watch.toml` 选择其他配置，或设置 `AERIS_DEVBOX_PORT` 选择端口。也可通过 `EMCC`、`EMAR` 指定已安装的 Emscripten 工具。
 
 ## 预览画布
 
@@ -40,23 +40,24 @@ WASM 画布的中文使用小米 MiSans 字体。DevBox 在首帧前从小米 CD
 
 ## 接入应用
 
-在应用目录放置 `devbox.json`。路径相对于配置文件。Cargo 本地依赖的 Rust 源码自动监听，应用素材可通过 `watch` 补充。
+在应用目录放置 `aeris.config.toml`。路径相对于配置文件。Cargo 本地依赖的 Rust 源码自动监听，应用素材可通过 `watch` 补充。
 
-添加 `"devices": ["xiaomi-band-10-pro-3.101.043", "xiaomi-band-11-4.100.155", "round-390", "square-480"]` 可并排预览四种屏幕。第一项是默认设备。点击设备或上方名称即可切换调试工具的作用对象。每个实例有独立的页面、场景和本地存储。应用可用 `aeris_ui::device::display_profile().viewport` 获取当前画布和安全区。
+在 `[devbox]` 下添加 `devices = ["xiaomi-band-10-pro-3.101.043", "xiaomi-band-11-4.100.155", "round-390", "square-480"]` 可并排预览四种屏幕。第一项是默认设备。点击设备或上方名称即可切换调试工具的作用对象。每个实例有独立的页面、场景和本地存储。应用可用 `aeris_ui::device::display_profile().viewport` 获取当前画布和安全区。
 
-「源代码」面板从 `manifest` 对应的应用包目录开始，可以展开目录并打开多个文件标签。`source` 用于指定默认打开的项目文件，路径仍相对于 `devbox.json`。
+「源代码」面板从 `manifest` 对应的应用包目录开始，可以展开目录并打开多个文件标签。`source` 用于指定默认打开的项目文件，路径仍相对于 `aeris.config.toml`。
 
-浏览器标签页图标默认读取应用包内 `Canopus.toml` 的 `[native_app].icon`。也可以在 `devbox.json` 中用 `icon` 指定一张相对于配置文件的图片。没有可用图标时会显示内置占位图。
+浏览器标签页图标默认读取应用包内 `Canopus.toml` 的 `[native_app].icon`。也可以在 `aeris.config.toml` 中用 `icon` 指定一张相对于配置文件的图片。没有可用图标时会显示内置占位图。
 
-```json
-{
-  "title": "我的手表应用",
-  "manifest": "Cargo.toml",
-  "features": ["devbox"],
-  "source": "src/lib.rs",
-  "watch": ["assets"]
-}
+```toml
+[devbox]
+title = "我的手表应用"
+manifest = "Cargo.toml"
+features = ["devbox"]
+source = "src/lib.rs"
+watch = ["assets"]
 ```
+
+主题可写在同一文件的 `[theme]` 和 `[theme.colors]` 下，预览场景使用 `[[devbox.scenes]]`。DevBox 仍支持已有的 `devbox.json` 项目。
 
 确认应用使用的 Aeris UI 支持 DevBox。在应用的 Cargo 特性表中加入：
 
@@ -103,7 +104,7 @@ cargo aeris-devbox
 cargo aeris-devbox agent serve
 ```
 
-`install-browser` 和 `serve` 均接受可选的 `devbox.json` 路径。前台服务输出一行 JSON，其中的 `session` 是会话描述文件的绝对路径。描述文件包含访问令牌，供当前用户的终端和 Agent 使用。按 Ctrl+C 关闭会话并清理其临时构建产物和浏览器状态。
+`install-browser` 和 `serve` 均接受可选的 `aeris.config.toml` 路径。前台服务输出一行 JSON，其中的 `session` 是会话描述文件的绝对路径。描述文件包含访问令牌，供当前用户的终端和 Agent 使用。按 Ctrl+C 关闭会话并清理其临时构建产物和浏览器状态。
 
 在另一个终端中设置 `SESSION` 为上述路径。以下示例需要 `jq`，用于读取 JSON 中的编号。
 

@@ -287,7 +287,7 @@ pub unsafe fn confirmation(
                     style: page::ButtonStyle::Primary,
                     dimmed: false,
                 },
-                page::ButtonTheme::Glass,
+                page::ButtonTheme::default(),
             );
             let secondary = cancel_text.is_none_or(|label| {
                 !page::button_with_theme(
@@ -301,7 +301,7 @@ pub unsafe fn confirmation(
                         style: page::ButtonStyle::Secondary,
                         dimmed: false,
                     },
-                    page::ButtonTheme::Glass,
+                    page::ButtonTheme::default(),
                 )
                 .is_null()
             });

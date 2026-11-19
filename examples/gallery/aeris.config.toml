@@ -1,0 +1,13 @@
+[theme]
+button_style = "glass"
+
+[theme.colors]
+accent = "#0088FF"
+
+[devbox]
+title = "Aeris UI Gallery"
+manifest = "Cargo.toml"
+features = ["devbox"]
+devices = ["xiaomi-band-10-pro-3.101.043", "xiaomi-band-11-4.100.155"]
+source = "src/gallery.rs"
+watch = ["assets"]

@@ -2,6 +2,31 @@
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
+/// 应用按钮外观。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum ButtonTheme {
+    Glass,
+    Normal,
+}
+
+static BUTTON_THEME: AtomicU32 = AtomicU32::new(ButtonTheme::Glass as u32);
+
+impl Default for ButtonTheme {
+    fn default() -> Self {
+        match BUTTON_THEME.load(Ordering::Relaxed) {
+            value if value == Self::Normal as u32 => Self::Normal,
+            _ => Self::Glass,
+        }
+    }
+}
+
+/// 在创建组件前应用按钮外观和语义色。缺省色值沿用组件原色。
+pub fn apply(button_theme: ButtonTheme, colors: [Option<Rgb>; Color::ALL.len()]) {
+    BUTTON_THEME.store(button_theme as u32, Ordering::Relaxed);
+    set_colors(colors);
+}
+
 /// 供 LVGL 绘制使用的基础 RGB 色值。
 pub struct Theme {
     /// 设计稿画布底色。

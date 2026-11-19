@@ -9,7 +9,7 @@ use crate::{
 };
 use canopus_target_private::*;
 
-use super::{anim, assets};
+use super::{anim, assets, page, round_button};
 
 pub type Obj = *mut c_void;
 
@@ -216,6 +216,11 @@ pub unsafe fn image(parent: Obj, path: &[u8], x: i32, y: i32) -> Obj {
         }
         lvx_object_align(object, ALIGN_TOP_LEFT, x, y);
     }
+    if let Some(opacity) = accent_image_opacity(path) {
+        if let Some(accent) = theme::accent_button() {
+            tint(object, accent.fill, opacity);
+        }
+    }
     object
 }
 
@@ -232,6 +237,35 @@ pub unsafe fn set_image_source(object: Obj, path: &[u8]) -> bool {
     };
     unsafe { lvx_image_set_src(object, path.as_ptr().cast()) };
     true
+}
+
+// Glass faces keep part of the source shading. Flat faces use the configured fill.
+fn accent_image_opacity(path: &[u8]) -> Option<u32> {
+    let name = path.strip_suffix(b"\0")?;
+    if name.starts_with(b"round-") && name.ends_with(b"-accent.bin") {
+        return Some(if name.ends_with(b"-normal-accent.bin") {
+            255
+        } else {
+            160
+        });
+    }
+    if name.starts_with(b"button-normal-") {
+        return Some(if name.starts_with(b"button-normal-dimmed-") {
+            128
+        } else {
+            255
+        });
+    }
+    if name.starts_with(b"gallery-capsule-primary-") {
+        return (theme::Color::Accent.resolve() != theme::Color::Accent.default_rgb())
+            .then_some(160);
+    }
+    // DevBox tints these stock bitmaps during asset registration.
+    #[cfg(not(target_arch = "wasm32"))]
+    if name == b"header-button-primary.bin" || name.starts_with(b"capsule-primary-") {
+        return Some(160);
+    }
+    None
 }
 
 pub unsafe fn label(
@@ -414,6 +448,17 @@ pub unsafe fn header_button(
     x: i32,
     y: i32,
 ) -> HeaderButton {
+    let background = if theme::ButtonTheme::default() == theme::ButtonTheme::Normal {
+        if background == assets::BUTTON_PRIMARY {
+            round_button::STANDARD_FLAT_ACCENT
+        } else if background == assets::BUTTON_BLACK || background == assets::BUTTON_ABOUT {
+            round_button::STANDARD_FLAT_NEUTRAL
+        } else {
+            background
+        }
+    } else {
+        background
+    };
     let button = unsafe { round_button(parent, background, glyph, x, y, 68, 14) };
     unsafe { inspect_name(button.root, c"AerisUI.HeaderButton") };
     button
@@ -450,7 +495,9 @@ pub unsafe fn round_button(
         button.icon = image(root, glyph, inset, inset);
         if !button.icon.is_null() {
             lvx_object_clear_flag(button.icon, CLICKABLE | SCROLLABLE);
-            if background == assets::BUTTON_PRIMARY {
+            if background == assets::BUTTON_PRIMARY
+                || background == round_button::STANDARD_FLAT_ACCENT
+            {
                 if let Some(colors) = theme::primary_icon_button() {
                     recolor(button.icon, colors.foreground);
                 }
@@ -519,6 +566,29 @@ pub(super) unsafe fn build_capsule(
     kind: CapsuleKind,
     opacity: u32,
 ) -> Obj {
+    let area = Rect::new(x, y, width, height);
+    if theme::ButtonTheme::default() == theme::ButtonTheme::Normal {
+        match kind {
+            CapsuleKind::Large => {
+                return unsafe {
+                    capsule_face(
+                        parent,
+                        area,
+                        page::SECONDARY_BUTTON_SLICES,
+                        80,
+                        31 * opacity / 255,
+                        false,
+                    )
+                };
+            }
+            CapsuleKind::LargePrimary => {
+                return unsafe {
+                    capsule_face(parent, area, page::NORMAL_BUTTON_SLICES, 80, opacity, false)
+                };
+            }
+            CapsuleKind::Regular => {}
+        }
+    }
     let (left, center, right) = match kind {
         CapsuleKind::Regular => (
             assets::CAPSULE_LEFT,
@@ -539,7 +609,7 @@ pub(super) unsafe fn build_capsule(
     unsafe {
         capsule_face(
             parent,
-            Rect::new(x, y, width, height),
+            area,
             [left, center, right],
             kind.height(),
             opacity,

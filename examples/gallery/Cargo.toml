@@ -18,6 +18,9 @@ target-xiaomi-band-10-pro-3-101-043 = [
   "aeris-ui/gallery",
 ]
 
+[build-dependencies]
+toml = "0.5.11"
+
 [dependencies]
 aeris-ui = { path = "../../crates/aeris-ui" }
 

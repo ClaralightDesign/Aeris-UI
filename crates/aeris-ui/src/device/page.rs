@@ -173,12 +173,7 @@ pub struct ButtonOptions {
     pub dimmed: bool,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum ButtonTheme {
-    #[default]
-    Glass,
-    Normal,
-}
+pub use crate::theme::ButtonTheme;
 
 macro_rules! button_slices {
     ($name:literal) => {
@@ -189,6 +184,9 @@ macro_rules! button_slices {
         ]
     };
 }
+
+pub(super) const NORMAL_BUTTON_SLICES: [&[u8]; 3] = button_slices!("normal");
+pub(super) const SECONDARY_BUTTON_SLICES: [&[u8]; 3] = button_slices!("secondary");
 
 pub unsafe fn button_with_options(
     parent: Obj,
@@ -207,7 +205,7 @@ pub unsafe fn button_with_options(
             action,
             data,
             options,
-            ButtonTheme::Glass,
+            ButtonTheme::default(),
         )
     }
 }
@@ -241,11 +239,11 @@ pub unsafe fn button_with_theme(
             if options.dimmed { 15 } else { 31 },
         ),
         (ButtonStyle::Secondary, _, _) => (
-            button_slices!("secondary"),
+            SECONDARY_BUTTON_SLICES,
             80,
             if options.dimmed { 15 } else { 31 },
         ),
-        (_, ButtonTheme::Normal, false) => (button_slices!("normal"), 80, 255),
+        (_, ButtonTheme::Normal, false) => (NORMAL_BUTTON_SLICES, 80, 255),
         (_, ButtonTheme::Normal, true) => (button_slices!("normal-dimmed"), 80, 255),
         _ => (
             [

@@ -9,3 +9,9 @@ Gallery 是组件库内的独立示例应用。小米手环 10 Pro 和小米手�
 准备好 Canopus CLI 后，在组件库根目录运行 `sh examples/gallery/build.sh` 生成并校验安装包。可通过 `CANOPUS_CLI`、`CANOPUS_ROOT`、`AERIS_PACKAGE_OUTPUT` 指定工具、框架和输出位置。目前原生安装包目标为小米手环 10 Pro `3.101.043`；手环 11 原生打包与真机验证见仓库待办。
 
 生成的安装包与构建缓存位于本目录的 `dist/`、`target/`、`build/`，不纳入版本控制。字体许可见 `fonts/OFL.txt`。
+
+## 主题
+
+在应用根目录的 [aeris.config.toml](aeris.config.toml) 的 `[theme]` 中设置 `button_style` 为 `"glass"`（玻璃）或 `"flat"`（扁平）。`theme.colors.accent` 是强调色，Aeris UI 会用它推导主按钮的填充色和前景色。可选的 `theme.colors.background`、`theme.colors.primary_text` 和 `theme.colors.secondary_text` 分别覆盖背景、主文字和次要文字。色值使用 `#RRGGBB`，省略的色值沿用组件默认值。
+
+主题配置在构建时嵌入应用。`[devbox]` 配置预览设备、构建特性、源码入口和监听目录。DevBox 会监听该文件，原生安装包需重新构建。

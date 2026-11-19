@@ -11,8 +11,12 @@ pub use bindings::{LvxEventCallback, LvxTimerCallback, Obj};
 #[macro_export]
 macro_rules! devbox_app {
     ($start:path) => {
+        $crate::devbox_app!($start, before_assets = || {});
+    };
+    ($start:path, before_assets = $prepare:expr) => {
         #[unsafe(no_mangle)]
         pub extern "C" fn aeris_devbox_mount() -> i32 {
+            ($prepare)();
             unsafe { $crate::devbox::boot($start) }
         }
     };

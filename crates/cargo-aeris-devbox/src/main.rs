@@ -11,7 +11,8 @@ use std::{
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 const TARGET: &str = "wasm32-unknown-emscripten";
-const USAGE: &str = "用法：cargo aeris-devbox [devbox.json | --demo]\n      cargo aeris-devbox agent --help";
+const CONFIG_NAME: &str = "aeris.config.toml";
+const USAGE: &str = "用法：cargo aeris-devbox [aeris.config.toml | --demo]\n      cargo aeris-devbox agent --help";
 const AGENT_CLIENT: &str = include_str!("agent-client.mjs");
 const RUNTIME_FILES: &[&str] = &[
     "cli.mjs",
@@ -69,7 +70,10 @@ fn launch() -> Result<()> {
             return Ok(());
         }
         Some(arg) => PathBuf::from(arg),
-        None => PathBuf::from("devbox.json"),
+        None if !Path::new(CONFIG_NAME).is_file() && Path::new("devbox.json").is_file() => {
+            PathBuf::from("devbox.json")
+        }
+        None => PathBuf::from(CONFIG_NAME),
     };
     if args.next().is_some() {
         return Err(USAGE.into());
@@ -83,11 +87,21 @@ fn launch() -> Result<()> {
         )
     })?;
     let project = config.parent().ok_or("配置文件需要位于应用目录。")?;
-    let settings: Value = serde_json::from_slice(&fs::read(&config)?)?;
+    let contents = fs::read_to_string(&config)?;
+    let settings: Value = if config.extension().is_some_and(|ext| ext == "json") {
+        serde_json::from_str(&contents)?
+    } else {
+        let document: toml::value::Table = toml::from_str(&contents)?;
+        let devbox = document
+            .get("devbox")
+            .and_then(toml::Value::as_table)
+            .ok_or("配置文件需要 [devbox] 表。")?;
+        serde_json::to_value(devbox)?
+    };
     let manifest = settings["manifest"]
         .as_str()
         .filter(|path| !path.trim().is_empty())
-        .ok_or("devbox.json 需要 manifest，指向应用的 Cargo.toml。")?;
+        .ok_or("DevBox 配置需要 manifest，指向应用的 Cargo.toml。")?;
     let manifest = project.join(manifest).canonicalize()?;
     let cargo = env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
     let mut command = Command::new(&cargo);
@@ -166,16 +180,16 @@ fn gallery_config() -> Result<PathBuf> {
     cwd.ancestors()
         .flat_map(|parent| {
             [
-                parent.join("examples/gallery/devbox.json"),
-                parent.join("Aeris-UI/examples/gallery/devbox.json"),
+                parent.join("examples/gallery/aeris.config.toml"),
+                parent.join("Aeris-UI/examples/gallery/aeris.config.toml"),
             ]
         })
         .find(|candidate| candidate.is_file())
         .or_else(|| {
-            let bundled = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/gallery/devbox.json");
+            let bundled = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/gallery/aeris.config.toml");
             bundled.is_file().then_some(bundled)
         })
-        .ok_or_else(|| "找不到 examples/gallery/devbox.json。请设置 AERIS_GALLERY_DEVBOX_CONFIG。".into())
+        .ok_or_else(|| "找不到 examples/gallery/aeris.config.toml。请设置 AERIS_GALLERY_DEVBOX_CONFIG。".into())
 }
 
 fn aeris_dependency<'a>(metadata: &'a Value, manifest: &Path) -> Result<&'a Value> {
@@ -220,7 +234,7 @@ fn aeris_dependency<'a>(metadata: &'a Value, manifest: &Path) -> Result<&'a Valu
         .and_then(|node| node["features"].as_array())
         .is_some_and(|features| features.iter().any(|feature| feature == "devbox"));
     if !enabled {
-        return Err("请在 devbox.json 选用启用了 aeris-ui/devbox 的应用 feature。".into());
+        return Err("请在 DevBox 配置中选用启用了 aeris-ui/devbox 的应用 feature。".into());
     }
     Ok(dependency)
 }

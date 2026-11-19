@@ -16,7 +16,7 @@ import { embedDisplays, loadDisplayProfiles, selectDisplayProfiles } from './nat
 
 const root = fileURLToPath(new URL('.', import.meta.url));
 if (process.argv.includes('--help')) {
-  console.log('用法：cargo aeris-devbox [devbox.json | --demo]\n      cargo aeris-devbox agent --help');
+  console.log('用法：cargo aeris-devbox [aeris.config.toml | --demo]\n      cargo aeris-devbox agent --help');
   process.exit(0);
 }
 const [, , entry, action, configArg] = process.argv;
@@ -30,9 +30,11 @@ const agentMode = entry === 'agent' && action === 'serve';
 const configInput = agentMode ? configArg : entry;
 const demo = configInput === '--demo';
 const aerisRoot = resolve(process.env.AERIS_DEVBOX_SOURCE_ROOT ?? resolve(root, '..'));
+const defaultConfig = 'aeris.config.toml';
 const configPath = demo
-  ? resolve(process.env.AERIS_GALLERY_DEVBOX_CONFIG ?? join(aerisRoot, 'examples/gallery/devbox.json'))
-  : resolve(configInput ?? 'devbox.json');
+  ? resolve(process.env.AERIS_GALLERY_DEVBOX_CONFIG ?? join(aerisRoot, 'examples/gallery', defaultConfig))
+  : resolve(configInput ?? (!existsSync(defaultConfig) && existsSync('devbox.json')
+    ? 'devbox.json' : defaultConfig));
 const project = resolve(configPath, '..');
 const renderFavicon = createFavicon(join(root, 'web/assets'), project, demo);
 const profiles = loadDisplayProfiles(aerisRoot);
@@ -60,7 +62,9 @@ const buildRoot = agentMode ? agentDirectory : resolve(project, 'target/aeris-de
 const cargoTarget = join(buildRoot, 'cargo');
 const native = join(buildRoot, 'native');
 const preview = join(buildRoot, 'preview.html');
-const storageId = createHash('sha256').update(configPath).digest('hex').slice(0, 16);
+// Keep the storage namespace when an app migrates its default config.
+const storagePath = configPath === join(project, defaultConfig) ? join(project, 'devbox.json') : configPath;
+const storageId = createHash('sha256').update(storagePath).digest('hex').slice(0, 16);
 const hiddenSourceNames = new Set(['target', 'node_modules', 'dist', 'build', 'vendor', 'Cargo.lock', 'pnpm-lock.yaml', 'package-lock.json', 'yarn.lock']);
 const sourceExtensions = new Set(['.rs', '.toml', '.c', '.h', '.cc', '.cpp', '.hpp', '.s', '.ld', '.ts', '.tsx', '.js', '.jsx',
   '.mjs', '.cjs', '.css', '.html', '.svg', '.json', '.yaml', '.yml', '.md', '.mdx', '.txt', '.sh', '.py']);
@@ -126,10 +130,11 @@ function serveSource(url, res) {
 
 function config() {
   if (demo && !existsSync(configPath)) {
-    throw new Error('找不到库内 examples/gallery/devbox.json。请检查 Aeris UI 源码，或设置 AERIS_GALLERY_DEVBOX_CONFIG。');
+    throw new Error('找不到库内 examples/gallery/aeris.config.toml。请检查 Aeris UI 源码，或设置 AERIS_GALLERY_DEVBOX_CONFIG。');
   }
-  const data = JSON.parse(readFileSync(configPath, 'utf8'));
-  if (typeof data.title !== 'string' || !data.title.trim()
+  const source = readFileSync(configPath, 'utf8');
+  const data = extname(configPath) === '.json' ? JSON.parse(source) : parse(source).devbox;
+  if (!data || typeof data.title !== 'string' || !data.title.trim()
       || typeof data.manifest !== 'string' || !data.manifest.trim()
       || (data.icon !== undefined && (typeof data.icon !== 'string' || !data.icon.trim()))
       || (data.source !== undefined && typeof data.source !== 'string')
@@ -140,7 +145,7 @@ function config() {
         || new Set(data.scenes.map(({ id }) => id)).size !== data.scenes.length))
       || (data.features !== undefined && (!Array.isArray(data.features) || data.features.some((feature) => typeof feature !== 'string')))
       || (data.watch !== undefined && (!Array.isArray(data.watch) || data.watch.some((path) => typeof path !== 'string')))) {
-    throw new Error('devbox.json 需要 title 和 manifest，场景使用唯一的 id 和 title。');
+    throw new Error('DevBox 配置需要 title 和 manifest，场景使用唯一的 id 和 title。');
   }
   selectDisplayProfiles(profiles, data.devices);
   return data;

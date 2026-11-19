@@ -1,0 +1,34 @@
+[devbox]
+title = "Aeris UI 布局预览"
+manifest = "Cargo.toml"
+devices = ["xiaomi-band-10-pro-3.101.043", "xiaomi-band-11-4.100.155", "redmi-watch", "round-390", "square-480"]
+
+[[devbox.scenes]]
+id = "layout-settings"
+title = "响应式设置"
+source = "src/layout.rs"
+
+[[devbox.scenes]]
+id = "layout-empty"
+title = "空容器"
+source = "src/layout.rs"
+
+[[devbox.scenes]]
+id = "layout-header"
+title = "标题栏和卡片"
+source = "src/lib.rs"
+
+[[devbox.scenes]]
+id = "adaptive-dialog"
+title = "自适应确认对话框"
+source = "src/lib.rs"
+
+[[devbox.scenes]]
+id = "adaptive-confirmation"
+title = "自适应结果浮层"
+source = "src/lib.rs"
+
+[[devbox.scenes]]
+id = "adaptive-round-button"
+title = "页边按钮"
+source = "src/lib.rs"
